@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Puddle 🦆 — a very serious duck emporium, running in your browser</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#EAF2F1; --surface:#FFFFFF; --ink:#14282E; --muted:#5C7480;
+    --line:#D7E3E0; --accent:#FFC93C; --accent-ink:#5A4600; --teal:#1E7A8C; --bill:#FF8C42;
+    --shadow:0 1px 2px rgba(15,33,41,.06),0 8px 24px rgba(15,33,41,.06);
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);
+    padding-bottom:132px; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+
+  /* header */
+  header{padding:34px 0 18px}
+  .mark{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .mark h1{
+    font-family:'Fredoka',sans-serif;font-weight:700;font-size:34px;
+    letter-spacing:-.01em;margin:0;
+  }
+  .mascotwrap{position:relative;display:inline-block;vertical-align:middle}
+  .mascot{
+    display:inline-block;font-size:26px;transform-origin:50% 80%;
+    animation:duckBob 2.6s ease-in-out infinite;
+  }
+  @keyframes duckBob{0%,100%{transform:translateY(0) rotate(-6deg)}50%{transform:translateY(-5px) rotate(6deg)}}
+  .mascot.hop{animation:duckHop .55s ease}
+  @keyframes duckHop{
+    0%{transform:translateY(0) scale(1) rotate(0)}
+    30%{transform:translateY(-16px) scale(1.15) rotate(-10deg)}
+    60%{transform:translateY(0) scale(.95) rotate(8deg)}
+    100%{transform:translateY(0) scale(1) rotate(0)}
+  }
+  .mascot.party{animation:duckParty .95s ease}
+  @keyframes duckParty{
+    0%{transform:scale(1) rotate(0)}
+    20%{transform:scale(1.3) rotate(-14deg)}
+    40%{transform:scale(1.1) rotate(12deg)}
+    60%{transform:scale(1.25) rotate(-10deg)}
+    80%{transform:scale(1.05) rotate(8deg)}
+    100%{transform:scale(1) rotate(0)}
+  }
+  .mascot.upset{animation:duckUpset .55s ease}
+  @keyframes duckUpset{
+    0%,100%{transform:translateX(0) rotate(0)}
+    20%{transform:translateX(-7px) rotate(-11deg)}
+    40%{transform:translateX(7px) rotate(11deg)}
+    60%{transform:translateX(-5px) rotate(-7deg)}
+    80%{transform:translateX(5px) rotate(7deg)}
+  }
+  .bubble{
+    position:absolute;top:-28px;left:50%;transform:translateX(-50%) scale(.6);
+    background:var(--ink);color:#fff;font-family:'JetBrains Mono',monospace;
+    font-size:11px;padding:4px 9px;border-radius:8px;white-space:nowrap;
+    opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:7;
+  }
+  .bubble.show{opacity:1;transform:translateX(-50%) scale(1)}
+  .feather{position:fixed;width:8px;height:8px;border-radius:2px;pointer-events:none;z-index:8;opacity:.9}
+  @keyframes featherFall{0%{opacity:1}100%{transform:translateY(140px) rotate(360deg);opacity:0}}
+
+  .tag{font-size:14px;color:var(--muted)}
+  .status{
+    margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:12px;
+    display:inline-flex;align-items:center;gap:8px;color:var(--muted);
+    background:var(--surface);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:#C7CF45}
+  .dot.ready{background:var(--teal)}
+  .dot.loading{background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  .navlink{
+    font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--ink);
+    text-decoration:none;background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:7px 14px;transition:border-color .12s ease;
+  }
+  .navlink:hover{border-color:var(--bill)}
+
+  /* cart ("flock") */
+  .cartwrap{position:relative}
+  .cartchip{
+    font-family:'JetBrains Mono',monospace;font-size:13px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px;color:var(--ink);
+  }
+  .cartchip:hover{border-color:var(--bill)}
+  .cartchip .n{background:var(--ink);color:#fff;border-radius:999px;padding:1px 7px;font-size:11.5px}
+  .cartpanel{
+    display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;
+    background:var(--surface);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);padding:14px;z-index:6;
+  }
+  .cartpanel.open{display:block}
+  .cartline{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;gap:10px}
+  .cartline span:first-child{color:var(--muted)}
+  .cartempty{font-size:13px;color:var(--muted);padding:6px 0}
+  .miniadd{
+    font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;
+    border:1px solid var(--line);background:var(--bg);color:var(--ink);
+    border-radius:6px;padding:1px 7px;margin-left:6px;
+  }
+  .miniadd:hover{background:var(--accent);border-color:var(--accent)}
+  .cartfoot{
+    display:flex;justify-content:space-between;align-items:center;
+    margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
+  }
+  .cartfoot b{font-family:'Fredoka',sans-serif;font-weight:600;font-size:16px}
+  #checkoutBtn{
+    font-family:'JetBrains Mono',monospace;font-size:12.5px;cursor:pointer;
+    border:1px solid var(--bill);background:var(--bill);color:#fff;
+    padding:7px 12px;border-radius:8px;
+  }
+  #checkoutBtn:disabled{opacity:.4;cursor:not-allowed;background:var(--surface);color:var(--ink);border-color:var(--line)}
+
+  /* Quackers currency mark */
+  .quacker {
+    position: relative;
+    display: inline-block;
+    font-weight: 600;
+  }
+  .quacker::before {
+    content: "";
+    position: absolute;
+    left: -0.05em;
+    right: -0.05em;
+    top: 50%;
+    height: 0.09em;
+    background: currentColor;
+    transform: translateY(-50%);
+  }
+
+  /* controls */
+  .controls{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:16px;margin-top:14px;
+    display:grid;gap:14px;
+  }
+  .searchrow{display:flex;gap:10px;align-items:center}
+  .search{
+    flex:1;display:flex;align-items:center;gap:10px;background:var(--bg);
+    border:1px solid var(--line);border-radius:10px;padding:0 12px;
+  }
+  .search svg{flex:none;color:var(--muted)}
+  .search input{
+    border:0;background:none;outline:none;font-size:15px;color:var(--ink);
+    padding:12px 0;width:100%;font-family:inherit;
+  }
+  .sort select{
+    font-family:inherit;font-size:14px;color:var(--ink);background:var(--surface);
+    border:1px solid var(--line);border-radius:10px;padding:12px 12px;outline:none;
+  }
+  .facets{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{
+    font-family:'JetBrains Mono',monospace;font-size:12.5px;letter-spacing:.02em;
+    border:1px solid var(--line);background:var(--surface);color:var(--muted);
+    padding:7px 12px;border-radius:999px;cursor:pointer;user-select:none;
+    transition:all .12s ease;
+  }
+  .chip:hover{border-color:var(--teal);color:var(--ink)}
+  .chip[aria-pressed="true"]{
+    background:var(--bill);color:#fff;border-color:var(--bill);
+  }
+  .price{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);min-width:250px}
+  .price input[type=range]{accent-color:var(--teal);flex:1}
+  .price .val{font-family:'JetBrains Mono',monospace;color:var(--ink);min-width:52px;text-align:right}
+  .toggle{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted);cursor:pointer;user-select:none}
+  .toggle input{accent-color:var(--teal);width:16px;height:16px}
+  .spacer{flex:1}
+
+  /* pond waterline divider */
+  .wave{width:100vw;position:relative;left:50%;margin-left:-50vw;height:20px;margin-top:14px;overflow:hidden}
+  .wave svg{width:100%;height:100%;display:block}
+  .wave path{fill:var(--teal);opacity:.18}
+
+  /* results */
+  .meta{display:flex;align-items:baseline;justify-content:space-between;margin:12px 2px 12px}
+  .meta .count{font-family:'Fredoka',sans-serif;font-weight:500;font-size:15px}
+  .meta .count b{font-weight:700}
+
+  /* post-purchase recommendation banner — its own surface, not the cart */
+  .ppbanner{
+    display:none;position:relative;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 44px 16px 18px;
+    margin-bottom:16px;
+  }
+  .ppbanner.show{display:block}
+  .ppclose{
+    position:absolute;top:12px;right:12px;width:24px;height:24px;border-radius:50%;
+    border:1px solid var(--line);background:var(--bg);color:var(--muted);cursor:pointer;
+    font-size:12px;line-height:1;display:flex;align-items:center;justify-content:center;
+  }
+  .ppclose:hover{border-color:var(--bill);color:var(--ink)}
+  .ppgroup{margin-bottom:12px}
+  .ppgroup:last-child{margin-bottom:0}
+  .ppgroup b{
+    display:block;font-family:'JetBrains Mono',monospace;font-size:10.5px;
+    letter-spacing:.04em;text-transform:uppercase;color:var(--teal);margin-bottom:8px;
+  }
+  .ppitems{display:flex;gap:10px;flex-wrap:wrap}
+  .ppitem{
+    display:flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;font-size:13px;
+  }
+  .ppitem .name{font-weight:500}
+  .ppitem .price{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:14px}
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:16px;display:flex;flex-direction:column;gap:8px;
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .card:hover{transform:translateY(-3px) rotate(-.6deg);box-shadow:0 2px 4px rgba(15,33,41,.08),0 14px 30px rgba(15,33,41,.10)}
+  .card .cat{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--teal);
+  }
+  .card .name{font-family:'Fredoka',sans-serif;font-weight:500;font-size:16.5px;line-height:1.25}
+  .card .desc{font-size:12.5px;color:var(--muted);line-height:1.45;flex:1}
+  .card .foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+  .price-tag{font-family:'Fredoka',sans-serif;font-weight:700;font-size:19px}
+  .rating{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--muted)}
+  .rating .star{color:var(--accent)}
+  .stock{font-family:'JetBrains Mono',monospace;font-size:11px;padding:3px 8px;border-radius:999px}
+  .stock.in{background:#E6F2F0;color:#0C6B5A}
+  .stock.out{background:#F3E7E7;color:#9B4242}
+  .cart{
+    font-family:'JetBrains Mono',monospace;font-size:11.5px;cursor:pointer;
+    border:1px solid var(--ink);background:var(--surface);color:var(--ink);
+    padding:5px 10px;border-radius:8px;transition:all .12s ease;
+  }
+  .cart:hover:not(:disabled){background:var(--accent);border-color:var(--accent)}
+  .cart:disabled{opacity:.4;cursor:not-allowed}
+  .similar{
+    font-size:11px;line-height:1.5;color:var(--muted);
+    border-top:1px dashed var(--line);padding-top:8px;margin-top:2px;
+  }
+  .similar b{color:var(--teal);font-weight:600}
+  .toast{
+    position:fixed;bottom:96px;left:50%;transform:translateX(-50%) translateY(12px);
+    background:var(--ink);color:#fff;font-size:13px;padding:10px 16px;border-radius:10px;
+    box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:all .2s ease;z-index:5;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .empty{
+    grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--muted);
+    border:1px dashed var(--line);border-radius:var(--radius);
+  }
+  .empty b{color:var(--ink);font-family:'Fredoka',sans-serif}
+
+  /* signature: live query console */
+  .console{
+    position:fixed;left:0;right:0;bottom:0;background:#14282E;color:#CFE0E6;
+    border-top:1px solid #1E3A45;
+  }
+  .console .inner{max-width:1120px;margin:0 auto;padding:12px 20px;display:flex;gap:18px;align-items:center}
+  .console .label{
+    font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:#5F8494;flex:none;
+  }
+  .console pre{
+    font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.5;margin:0;
+    white-space:pre-wrap;flex:1;color:#DCEAF0;max-height:64px;overflow:auto;
+  }
+  .console .kw{color:#79C0D6}
+  .console .str{color:var(--accent)}
+  .console .perf{
+    flex:none;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right;
+    display:flex;flex-direction:column;gap:2px;
+  }
+  .console .perf .ms{color:var(--accent);font-weight:500;font-size:15px}
+  .console .perf .rows{color:#5F8494}
+  @media (max-width:640px){
+    .console pre{display:none}
+    .price{min-width:180px}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">
+      <h1>Puddle<span class="mascotwrap"><span class="mascot" id="mascot" aria-hidden="true">🦆</span><span class="bubble" id="mascotBubble"></span></span></h1>
+      <span class="tag">Waddle you buy today?</span>
+      <span class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling DuckDB into your browser…</span></span>
+      <a class="navlink" href="./dashboard.html">📊 Duck HQ</a>
+      <div class="cartwrap">
+        <button class="cartchip" id="cartBtn" aria-expanded="false">🦆 flock <span class="n" id="cartCount">0</span></button>
+        <div class="cartpanel" id="cartPanel">
+          <div id="cartItems"><div class="cartempty">Your flock is empty. Go make some friends.</div></div>
+          <div class="cartfoot">
+            <b id="cartTotal"><span class="quacker">Q</span>0.00</b>
+            <button id="checkoutBtn" disabled>Take them home</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="searchrow">
+        <label class="search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="q" type="text" placeholder="Search the pond for your perfect duck…" autocomplete="off" />
+        </label>
+        <span class="sort">
+          <select id="sort">
+            <option value="rating DESC">Best in show</option>
+            <option value="price_eur ASC">Price: low to high</option>
+            <option value="price_eur DESC">Price: high to low</option>
+            <option value="popularity DESC">Fan favorite</option>
+            <option value="name ASC">Name A–Z</option>
+          </select>
+        </span>
+      </div>
+      <div class="facets">
+        <div class="chips" id="cats"></div>
+        <div class="price">
+          <span>≤</span>
+          <input id="maxPrice" type="range" min="5" max="50" step="1" value="50" />
+          <span class="val" id="maxPriceVal"><span class="quacker">Q</span>50</span>
+        </div>
+        <label class="toggle"><input id="inStock" type="checkbox" /> In stock only</label>
+      </div>
+    </div>
+
+    <div class="wave" aria-hidden="true">
+      <svg viewBox="0 0 1200 24" preserveAspectRatio="none"><path d="M0,14 Q50,2 100,14 T200,14 T300,14 T400,14 T500,14 T600,14 T700,14 T800,14 T900,14 T1000,14 T1100,14 T1200,14 L1200,24 L0,24 Z"/></svg>
+    </div>
+
+    <div class="meta">
+      <div class="count" id="count">—</div>
+    </div>
+  </header>
+
+  <div class="ppbanner" id="ppBanner">
+    <button class="ppclose" id="ppClose" aria-label="Dismiss">✕</button>
+    <div id="ppContent"></div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="console">
+  <div class="inner">
+    <span class="label">🦆 live&nbsp;query</span>
+    <pre id="sql">—</pre>
+    <div class="perf">
+      <span class="ms" id="ms">—</span>
+      <span class="rows" id="rows"></span>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="tracker.js" data-collector="/collect"></script>
+<script type="module">
+import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+
+const $ = id => document.getElementById(id);
+const CATEGORIES = ['bath','decor','collectible','outdoor'];
+const CATEGORY_EMOJI = { bath:'🛁', decor:'🖼️', collectible:'🏆', outdoor:'🌳' };
+const state = { q:'', cats:new Set(), maxPrice:50, inStock:false, sort:'rating DESC' };
+let conn = null;
+let hasRecs = false;
+
+// ---- build category chips ----
+for (const c of CATEGORIES) {
+  const el = document.createElement('button');
+  el.className = 'chip'; el.textContent = `${CATEGORY_EMOJI[c]} ${c}`; el.setAttribute('aria-pressed','false');
+  el.onclick = () => {
+    if (state.cats.has(c)) { state.cats.delete(c); el.setAttribute('aria-pressed','false'); }
+    else { state.cats.add(c); el.setAttribute('aria-pressed','true'); }
+    run();
+  };
+  $('cats').appendChild(el);
+}
+
+// ---- the mascot: a very small, very serious duck ----
+const mascot = $('mascot');
+const bubble = $('mascotBubble');
+const MOOD_MS = { hop:550, party:950, upset:550 };
+let bubbleTimer = null;
+function mascotMood(mood, text) {
+  mascot.className = 'mascot ' + mood;
+  if (text) {
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => bubble.classList.remove('show'), 1800);
+  }
+  setTimeout(() => { mascot.className = 'mascot'; }, MOOD_MS[mood] || 600);
+}
+function burstFeathers() {
+  const rect = mascot.getBoundingClientRect();
+  const colors = ['var(--accent)', 'var(--bill)', 'var(--teal)'];
+  for (let i = 0; i < 7; i++) {
+    const f = document.createElement('span');
+    f.className = 'feather';
+    f.style.left = (rect.left + rect.width / 2 + (Math.random() * 44 - 22)) + 'px';
+    f.style.top = (rect.top + rect.height / 2) + 'px';
+    f.style.background = colors[i % colors.length];
+    f.style.animation = `featherFall ${0.7 + Math.random() * 0.5}s ease-out forwards`;
+    document.body.appendChild(f);
+    setTimeout(() => f.remove(), 1300);
+  }
+}
+
+// ---- boot DuckDB-WASM ----
+async function boot() {
+  const bundles = duckdb.getJsDelivrBundles();
+  const bundle = await duckdb.selectBundle(bundles);
+  const workerUrl = URL.createObjectURL(
+    new Blob([`importScripts("${bundle.mainWorker}");`], { type:'text/javascript' })
+  );
+  const worker = new Worker(workerUrl);
+  const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  URL.revokeObjectURL(workerUrl);
+  conn = await db.connect();
+
+  const resp = await fetch('./catalog.parquet');
+  if (!resp.ok) throw new Error('catalog.parquet not found — serve this folder over HTTP');
+  const buf = new Uint8Array(await resp.arrayBuffer());
+  await db.registerFileBuffer('catalog.parquet', buf);
+  await conn.query(`CREATE TABLE catalog AS SELECT * FROM read_parquet('catalog.parquet')`);
+
+  // "Ducks like this": DuckDB-WASM can load the vss extension itself (confirmed —
+  // INSTALL/LOAD vss and array_distance all work in-browser), so recommendations
+  // are computed live, right here, from the same toy embedding formula as the
+  // vss block in 05_extras.sql — no precompute or export step needed.
+  try {
+    await conn.query(`INSTALL vss`);
+    await conn.query(`LOAD vss`);
+    await conn.query(`
+      CREATE TABLE product_vectors AS
+      SELECT product_id, [
+          CASE category WHEN 'bath' THEN 1.0 WHEN 'decor' THEN 0.0
+                        WHEN 'collectible' THEN 0.0 ELSE 0.5 END,
+          CASE category WHEN 'outdoor' THEN 1.0 ELSE 0.0 END,
+          (price_eur / 50.0)::FLOAT,
+          ((product_id % 7) / 7.0)::FLOAT
+      ]::FLOAT[4] AS embedding
+      FROM catalog
+    `);
+    hasRecs = true;
+  } catch (e) { console.warn('vss unavailable — recommendations disabled', e); }
+
+  const n = (await conn.query(`SELECT count(*) AS n FROM catalog`)).toArray()[0].n;
+  $('dot').className = 'dot ready';
+  $('statusText').textContent = `${n} ducks bobbing · DuckDB in-browser`;
+  run();
+}
+
+// ---- assemble SQL from state ----
+function buildSQL() {
+  const where = [];
+  if (state.q.trim()) {
+    const t = state.q.trim().replace(/'/g, "''");
+    where.push(`(name ILIKE '%${t}%' OR description ILIKE '%${t}%')`);
+  }
+  if (state.cats.size) {
+    where.push(`category IN (${[...state.cats].map(c => `'${c}'`).join(', ')})`);
+  }
+  where.push(`price_eur <= ${state.maxPrice}`);
+  if (state.inStock) where.push(`in_stock`);
+  const clause = where.length ? `\nWHERE ${where.join('\n  AND ')}` : '';
+  const simCol = hasRecs
+    ? `,\n  (SELECT string_agg(name, ' · ' ORDER BY dist) FROM (\n     SELECT c2.name AS name, array_distance(v1.embedding, v2.embedding) AS dist\n     FROM product_vectors v1 JOIN product_vectors v2 ON v2.product_id <> v1.product_id\n     JOIN catalog c2 ON c2.product_id = v2.product_id\n     WHERE v1.product_id = catalog.product_id\n     ORDER BY dist LIMIT 4\n  )) AS similar_names`
+    : '';
+  return `SELECT product_id, name, category, price_eur, rating, in_stock, stock, description${simCol}\nFROM catalog${clause}\nORDER BY ${state.sort}`;
+}
+
+function highlight(sql) {
+  return sql
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/'[^']*'/g, m => `<span class="str">${m}</span>`)
+    .replace(/\b(SELECT|FROM|WHERE|AND|OR|ORDER BY|IN|ILIKE|ASC|DESC)\b/g,
+             m => `<span class="kw">${m}</span>`);
+}
+
+const num = v => typeof v === 'bigint' ? Number(v) : v;
+const stars = r => { const f = Math.round(r); return '<span class="star">'+'★'.repeat(f)+'</span>'+'☆'.repeat(5-f); };
+const quacker = amount => `<span class="quacker">Q</span>${amount}`;
+
+// ---- run query + render ----
+let timer = null;
+async function run() {
+  if (!conn) return;
+  const sql = buildSQL();
+  $('sql').innerHTML = highlight(sql);
+  const t0 = performance.now();
+  const res = await conn.query(sql);
+  const ms = performance.now() - t0;
+  const rows = res.toArray().map(r => r.toJSON());
+  $('ms').textContent = `⚡ ${ms.toFixed(2)} ms`;
+  $('rows').textContent = `${rows.length} row${rows.length===1?'':'s'}`;
+  $('count').innerHTML = `<b>${rows.length}</b> duck${rows.length===1?'':'s'}`;
+
+  const grid = $('grid');
+  if (!rows.length) {
+    grid.innerHTML = `<div class="empty"><b>Not even a stray feather.</b><br>Loosen a filter to see more of the pond.</div>`;
+    return;
+  }
+  grid.innerHTML = rows.map(r => {
+    const inStock = num(r.in_stock);
+    return `<div class="card">
+      <span class="cat">${CATEGORY_EMOJI[r.category] || ''} ${r.category}</span>
+      <span class="name">${r.name}</span>
+      <span class="desc">${r.description}</span>
+      <div class="foot">
+        <span class="price-tag">${quacker(num(r.price_eur).toFixed(2))}</span>
+        <span class="rating">${stars(num(r.rating))} ${num(r.rating).toFixed(1)}</span>
+      </div>
+      <div class="foot">
+        <span class="stock ${inStock?'in':'out'}">${inStock?`${num(r.stock)} left to adopt`:'flew the coop'}</span>
+        <button class="cart" data-id="${num(r.product_id)}" data-name="${r.name}" data-price="${num(r.price_eur)}" ${inStock?'':'disabled'}>${inStock?'Add to flock':'Flew the coop'}</button>
+      </div>
+      ${r.similar_names ? `<div class="similar"><b>🦆 Ducks like this:</b> ${r.similar_names}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ---- wire inputs ----
+$('q').addEventListener('input', e => { state.q = e.target.value;
+  clearTimeout(timer); timer = setTimeout(run, 80); });     // debounce keystrokes
+$('sort').addEventListener('change', e => { state.sort = e.target.value; run(); });
+$('maxPrice').addEventListener('input', e => {
+  state.maxPrice = +e.target.value; $('maxPriceVal').innerHTML = quacker(state.maxPrice);
+  clearTimeout(timer); timer = setTimeout(run, 40);
+});
+$('inStock').addEventListener('change', e => { state.inStock = e.target.checked; run(); });
+
+// ---- toast helper ----
+let toastTimer = null;
+function showToast(msg) {
+  const t = $('toast');
+  t.innerHTML = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ---- cart ("flock") + checkout: a real order, written into oltp.duckdb ----
+// No login flow in this demo, so map the tracker's durable visitor_id onto
+// one of the 500 seeded users (FNV-1a -> range 1..500) instead of inventing
+// a fake signup.
+function hashUser(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (Math.abs(h) % 500) + 1;
+}
+const userId = hashUser((window.puddle && window.puddle.visitorId) || String(Math.random()));
+
+const cart = new Map(); // product_id -> { name, price_eur, qty }
+
+function renderCart() {
+  const items = [...cart.values()];
+  const count = items.reduce((s, it) => s + it.qty, 0);
+  const total = items.reduce((s, it) => s + it.qty * it.price_eur, 0);
+  $('cartCount').textContent = count;
+  $('cartTotal').innerHTML = quacker(total.toFixed(2));
+  $('checkoutBtn').disabled = !items.length;
+  $('cartItems').innerHTML = items.length
+    ? items.map(it => `<div class="cartline"><span>${it.qty}× ${it.name}</span><span>${quacker((it.qty * it.price_eur).toFixed(2))}</span></div>`).join('')
+    : `<div class="cartempty">Your flock is empty. Go make some friends.</div>`;
+}
+
+$('cartBtn').addEventListener('click', () => {
+  $('cartPanel').classList.toggle('open');
+});
+
+function addToFlock(id, name, price) {
+  const existing = cart.get(id);
+  cart.set(id, { name, price_eur: price, qty: (existing?.qty || 0) + 1 });
+  renderCart();
+  mascotMood('hop');
+  if (window.puddle) window.puddle.track('add_to_cart', { product_id: id });
+  showToast(`Added ${name} to your flock — quack tracked 📡`);
+}
+
+// ---- personal recommendations, once a real order exists --------------------
+// Own surface, not the cart: appears as a dismissible banner above the grid,
+// right where you're already looking after checkout — not tucked inside a
+// dropdown you're about to close.
+function recGroup(title, rows) {
+  return `<div class="ppgroup"><b>🦆 ${title}</b>
+    <div class="ppitems">${rows.map(r => `<div class="ppitem">
+      <span class="name">${r.name}</span><span class="price">${quacker(num(r.price_eur).toFixed(2))}</span>
+      <button class="miniadd" data-id="${num(r.product_id)}" data-name="${r.name}" data-price="${num(r.price_eur)}">+</button>
+    </div>`).join('')}</div>
+  </div>`;
+}
+
+async function showPostPurchaseRecs(purchasedIds) {
+  const groups = [];
+
+  // 1. Item-based: "since you brought these home" — vss over what you just bought.
+  if (hasRecs && purchasedIds.length) {
+    const idList = purchasedIds.join(',');
+    const rows = (await conn.query(`
+      SELECT c.product_id, c.name, c.price_eur, min(array_distance(v1.embedding, v2.embedding)) AS dist
+      FROM product_vectors v1
+      JOIN product_vectors v2 ON v2.product_id NOT IN (${idList})
+      JOIN catalog c ON c.product_id = v2.product_id
+      WHERE v1.product_id IN (${idList})
+      GROUP BY c.product_id, c.name, c.price_eur
+      ORDER BY dist LIMIT 3
+    `)).toArray().map(r => r.toJSON());
+    if (rows.length) groups.push(recGroup('Since you brought them home:', rows));
+  }
+
+  // 2. Person-based: real collaborative filtering over YOUR order history in
+  // oltp.duckdb ("shoppers like you also got") — server-side, see collector.py.
+  try {
+    const res = await fetch(`/recommendations?user_id=${userId}`);
+    if (res.ok) {
+      const { product_ids } = await res.json();
+      if (product_ids && product_ids.length) {
+        const idl = product_ids.join(',');
+        const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
+          .toArray().map(r => r.toJSON());
+        const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
+        if (ordered.length) groups.push(recGroup('Shoppers like you also got:', ordered));
+      }
+    }
+  } catch (e) { /* personal picks are optional */ }
+
+  if (groups.length) {
+    $('ppContent').innerHTML = groups.join('');
+    $('ppBanner').classList.add('show');
+  }
+}
+
+$('ppClose').addEventListener('click', () => $('ppBanner').classList.remove('show'));
+$('ppContent').addEventListener('click', e => {
+  const btn = e.target.closest('.miniadd');
+  if (!btn) return;
+  addToFlock(+btn.dataset.id, btn.dataset.name, +btn.dataset.price);
+});
+
+async function placeOrder() {
+  const items = [...cart.entries()].map(([product_id, it]) => ({ product_id, qty: it.qty }));
+  if (!items.length) return;
+  $('checkoutBtn').disabled = true;
+  try {
+    const res = await fetch('/order', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, items }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    const total = [...cart.values()].reduce((s, it) => s + it.qty * it.price_eur, 0);
+    // catalog.parquet is a static snapshot -> reflect the real stock drop locally.
+    for (const it of items) {
+      const row = (await conn.query(`SELECT stock FROM catalog WHERE product_id = ${it.product_id}`)).toArray()[0];
+      const newStock = Math.max(0, num(row.stock) - it.qty);
+      await conn.query(`UPDATE catalog SET stock = ${newStock}, in_stock = ${newStock > 0} WHERE product_id = ${it.product_id}`);
+    }
+    cart.clear(); renderCart();
+    $('cartPanel').classList.remove('open');
+    mascotMood('party'); burstFeathers();
+    showToast(`🦆 Taken home — order #${data.order_id}, ${quacker(total.toFixed(2))}. Waddle safe!`);
+    showPostPurchaseRecs(items.map(it => it.product_id));
+    run();
+  } catch (err) {
+    mascotMood('upset', 'QUACK?!');
+    showToast(`🦆 Whoa there — sold out mid-waddle: ${err.message}`);
+  } finally {
+    $('checkoutBtn').disabled = !cart.size;
+  }
+}
+$('checkoutBtn').addEventListener('click', placeOrder);
+
+// Add-to-flock -> real cart line + a tracked event via tracker.js (window.puddle).
+$('grid').addEventListener('click', e => {
+  const btn = e.target.closest('.cart');
+  if (!btn || btn.disabled) return;
+  addToFlock(+btn.dataset.id, btn.dataset.name, +btn.dataset.price);
+});
+
+boot().catch(err => {
+  $('dot').className = 'dot';
+  $('statusText').textContent = 'the pond drained — see console 🦆💦';
+  $('sql').textContent = String(err);
+  console.error(err);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Duck HQ 🦆 — Puddle's live dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#EAF2F1; --surface:#FFFFFF; --ink:#14282E; --muted:#5C7480;
+    --line:#D7E3E0; --accent:#FFC93C; --accent-ink:#5A4600; --teal:#1E7A8C; --bill:#FF8C42;
+    --shadow:0 1px 2px rgba(15,33,41,.06),0 8px 24px rgba(15,33,41,.06);
+    --radius:16px;
+
+    /* chart tokens — validated with dataviz/scripts/validate_palette.js against
+       this page's --surface (#FFFFFF); see collector.py's get_dashboard() for
+       the queries these charts render. */
+    --chart-surface: var(--surface);
+    --chart-grid: #E1E0D9;
+    --chart-axis: #C3C2B7;
+    --chart-text: var(--muted);
+    --cat-bath: #0E86A0;        /* teal   */
+    --cat-decor: #8B5FBF;       /* violet */
+    --cat-collectible: #E0A400; /* gold   */
+    --cat-outdoor: #FF8C42;     /* orange (= --bill) */
+    --ord-1: #6EBBCF; --ord-2: #0E86A0; --ord-3: #0A4E5C; /* funnel ramp, light->dark */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px 60px}
+
+  header{padding:34px 0 18px}
+  .mark{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .mark h1{
+    font-family:'Fredoka',sans-serif;font-weight:700;font-size:30px;
+    letter-spacing:-.01em;margin:0;display:flex;align-items:center;gap:8px;
+  }
+  .tag{font-size:14px;color:var(--muted);flex:1}
+  .navlink{
+    font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--ink);
+    text-decoration:none;background:var(--surface);border:1px solid var(--line);
+    border-radius:999px;padding:7px 14px;transition:border-color .12s ease;
+  }
+  .navlink:hover{border-color:var(--bill)}
+  #refreshBtn{cursor:pointer}
+  #refreshBtn.spin{animation:spin .6s linear}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .status{
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);
+    display:flex;align-items:center;gap:8px;margin-top:4px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:#C7CF45}
+  .dot.ready{background:var(--teal)}
+  .dot.loading{background:var(--accent);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  /* stat tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:20px 0}
+  .tile{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:16px 18px;
+  }
+  .tile .label{font-size:12.5px;color:var(--muted)}
+  .tile .value{font-family:'Inter',sans-serif;font-weight:600;font-size:28px;margin-top:4px}
+  .tile.pulse{animation:tilePulse 1s ease}
+  @keyframes tilePulse{0%{background:#FFF6DC;border-color:var(--accent)}100%{background:var(--surface);border-color:var(--line)}}
+
+  /* chart cards */
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:860px){.cards{grid-template-columns:1fr}}
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:18px;margin-bottom:16px;
+  }
+  .card.wide{grid-column:1/-1}
+  .card h2{
+    font-family:'Fredoka',sans-serif;font-weight:600;font-size:16px;margin:0 0 2px;
+  }
+  .card .sub{font-size:12px;color:var(--muted);margin-bottom:12px}
+
+  .chart-svg{width:100%;height:auto;overflow:visible}
+  .gridline{stroke:var(--chart-grid);stroke-width:1}
+  .axis-line{stroke:var(--chart-axis);stroke-width:1}
+  .axis-label{font-family:'Inter',sans-serif;font-size:10.5px;fill:var(--chart-text)}
+  .bar-value{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;fill:var(--ink)}
+  .end-label{font-family:'Inter',sans-serif;font-weight:600;font-size:12px;fill:var(--ink)}
+  .drop-label{font-family:'JetBrains Mono',monospace;font-size:11px;fill:var(--muted)}
+
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+  .legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .legend-swatch{width:10px;height:10px;border-radius:3px;flex:none}
+
+  .empty{
+    text-align:center;padding:60px 20px;color:var(--muted);
+    border:1px dashed var(--line);border-radius:var(--radius);background:var(--surface);
+  }
+  .empty b{color:var(--ink);font-family:'Fredoka',sans-serif}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="mark">
+      <h1>🦆 Duck HQ</h1>
+      <span class="tag">Where the flock's numbers waddle in — live from oltp.duckdb + the lake.</span>
+      <a class="navlink" href="./">🛍️ Back to the store</a>
+      <a class="navlink" id="refreshBtn" href="#" title="Refresh">🔄 Refresh</a>
+    </div>
+    <div class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling the numbers together…</span></div>
+  </header>
+
+  <div id="content"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const CATEGORY_EMOJI = { bath:'🛁', decor:'🖼️', collectible:'🏆', outdoor:'🌳' };
+const CATEGORY_COLOR = { bath:'var(--cat-bath)', decor:'var(--cat-decor)', collectible:'var(--cat-collectible)', outdoor:'var(--cat-outdoor)' };
+
+const num = v => typeof v === 'bigint' ? Number(v) : v;
+const fmtCompact = n => n >= 1000 ? (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'K' : String(Math.round(n));
+const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function niceTicks(max, count = 4) {
+  if (max <= 0) return [0];
+  const rough = max / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const err = rough / mag;
+  const step = (err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1) * mag;
+  const ticks = [];
+  for (let t = 0; t <= max; t += step) ticks.push(Math.round(t * 100) / 100);
+  return ticks;
+}
+
+function roundedTopPath(x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h));
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+
+// ---- vertical bar chart (funnel / revenue) ----------------------------------
+function barChart({ data, valueFmt = String, width = 520, height = 230 }) {
+  const marginLeft = 44, marginRight = 16, marginTop = 28, marginBottom = 30;
+  const plotW = width - marginLeft - marginRight, plotH = height - marginTop - marginBottom;
+  const max = Math.max(...data.map(d => d.value), 1) * 1.2;
+  const ticks = niceTicks(max, 4);
+  const gap = plotW / data.length;
+  const bw = Math.min(24, gap * 0.5);
+  let svg = `<svg viewBox="0 0 ${width} ${height}" class="chart-svg">`;
+  for (const t of ticks) {
+    const y = marginTop + plotH - (t / max) * plotH;
+    svg += `<line x1="${marginLeft}" y1="${y}" x2="${width - marginRight}" y2="${y}" class="gridline"/>`;
+    svg += `<text x="${marginLeft - 8}" y="${y + 4}" class="axis-label" text-anchor="end">${fmtCompact(t)}</text>`;
+  }
+  svg += `<line x1="${marginLeft}" y1="${marginTop + plotH}" x2="${width - marginRight}" y2="${marginTop + plotH}" class="axis-line"/>`;
+  data.forEach((d, i) => {
+    const cx = marginLeft + gap * i + gap / 2;
+    const h = (d.value / max) * plotH;
+    const y = marginTop + plotH - h;
+    svg += `<path d="${roundedTopPath(cx - bw / 2, y, bw, h, 4)}" fill="${d.color}"><title>${d.label}: ${valueFmt(d.value)}</title></path>`;
+    svg += `<text x="${cx}" y="${y - 8}" class="bar-value" text-anchor="middle">${valueFmt(d.value)}</text>`;
+    svg += `<text x="${cx}" y="${marginTop + plotH + 20}" class="axis-label" text-anchor="middle">${d.label}</text>`;
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+// ---- funnel: ordinal bars + drop-off annotations ----------------------------
+function funnelChart(funnel) {
+  const data = [
+    { label: 'Sessions', value: num(funnel.sessions), color: 'var(--ord-1)' },
+    { label: 'Carted', value: num(funnel.carted), color: 'var(--ord-2)' },
+    { label: 'Purchased', value: num(funnel.purchased), color: 'var(--ord-3)' },
+  ];
+  const chart = barChart({ data, valueFmt: v => v.toLocaleString('en') });
+  return `${chart}
+    <div class="legend">
+      <span class="legend-item">${funnel.view_to_cart_pct}% of sessions add to flock</span>
+      <span class="legend-item">${funnel.cart_to_purchase_pct}% of those take them home</span>
+    </div>`;
+}
+
+// ---- retention: single-series line + dots -----------------------------------
+function lineChart({ data, width = 520, height = 230 }) {
+  const marginLeft = 40, marginRight = 40, marginTop = 20, marginBottom = 30;
+  const plotW = width - marginLeft - marginRight, plotH = height - marginTop - marginBottom;
+  const max = Math.max(...data.map(d => d.value), 1) * 1.2;
+  const ticks = niceTicks(max, 4);
+  const stepX = data.length > 1 ? plotW / (data.length - 1) : 0;
+  const pts = data.map((d, i) => ({ ...d, x: marginLeft + stepX * i, y: marginTop + plotH - (d.value / max) * plotH }));
+  let svg = `<svg viewBox="0 0 ${width} ${height}" class="chart-svg">`;
+  for (const t of ticks) {
+    const y = marginTop + plotH - (t / max) * plotH;
+    svg += `<line x1="${marginLeft}" y1="${y}" x2="${width - marginRight}" y2="${y}" class="gridline"/>`;
+    svg += `<text x="${marginLeft - 8}" y="${y + 4}" class="axis-label" text-anchor="end">${fmtCompact(t)}</text>`;
+  }
+  svg += `<line x1="${marginLeft}" y1="${marginTop + plotH}" x2="${width - marginRight}" y2="${marginTop + plotH}" class="axis-line"/>`;
+  const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ',' + p.y).join(' ');
+  svg += `<path d="${path}" fill="none" stroke="var(--teal)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  pts.forEach(p => {
+    svg += `<circle cx="${p.x}" cy="${p.y}" r="4" fill="var(--teal)" stroke="var(--chart-surface)" stroke-width="2"><title>Week ${p.label}: ${p.value} active</title></circle>`;
+    svg += `<text x="${p.x}" y="${marginTop + plotH + 20}" class="axis-label" text-anchor="middle">${p.label}</text>`;
+  });
+  const last = pts[pts.length - 1];
+  svg += `<text x="${last.x + 10}" y="${last.y + 4}" class="end-label" text-anchor="start">${last.value}</text>`;
+  svg += `</svg>`;
+  return svg;
+}
+
+// ---- daily trend: 3-series line chart + legend -------------------------------
+function multiLineChart(daily) {
+  const width = 1040, height = 240;
+  const marginLeft = 44, marginRight = 60, marginTop = 20, marginBottom = 34;
+  const plotW = width - marginLeft - marginRight, plotH = height - marginTop - marginBottom;
+  const series = [
+    { key: 'pageviews', label: 'Pageviews', color: 'var(--cat-bath)' },
+    { key: 'carts', label: 'Add to flock', color: 'var(--cat-outdoor)' },
+    { key: 'purchases', label: 'Taken home', color: 'var(--cat-decor)' },
+  ];
+  const max = Math.max(...daily.map(d => num(d.pageviews)), 1) * 1.15;
+  const ticks = niceTicks(max, 4);
+  const stepX = daily.length > 1 ? plotW / (daily.length - 1) : 0;
+
+  let svg = `<svg viewBox="0 0 ${width} ${height}" class="chart-svg">`;
+  for (const t of ticks) {
+    const y = marginTop + plotH - (t / max) * plotH;
+    svg += `<line x1="${marginLeft}" y1="${y}" x2="${width - marginRight}" y2="${y}" class="gridline"/>`;
+    svg += `<text x="${marginLeft - 8}" y="${y + 4}" class="axis-label" text-anchor="end">${fmtCompact(t)}</text>`;
+  }
+  svg += `<line x1="${marginLeft}" y1="${marginTop + plotH}" x2="${width - marginRight}" y2="${marginTop + plotH}" class="axis-line"/>`;
+
+  // sparse date ticks so labels don't collide
+  const dateEvery = Math.ceil(daily.length / 8);
+  daily.forEach((d, i) => {
+    if (i % dateEvery === 0 || i === daily.length - 1) {
+      const x = marginLeft + stepX * i;
+      svg += `<text x="${x}" y="${marginTop + plotH + 20}" class="axis-label" text-anchor="middle">${d.date.slice(5)}</text>`;
+    }
+  });
+
+  for (const s of series) {
+    const pts = daily.map((d, i) => ({
+      x: marginLeft + stepX * i,
+      y: marginTop + plotH - (num(d[s.key]) / max) * plotH,
+      v: num(d[s.key]),
+    }));
+    const path = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x + ',' + p.y).join(' ');
+    svg += `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const last = pts[pts.length - 1];
+    svg += `<circle cx="${last.x}" cy="${last.y}" r="4" fill="${s.color}" stroke="var(--chart-surface)" stroke-width="2"><title>${s.label}: ${last.v}</title></circle>`;
+    svg += `<text x="${last.x + 8}" y="${last.y + 4}" class="end-label" text-anchor="start">${last.v}</text>`;
+  }
+  svg += `</svg>`;
+
+  const legend = series.map(s => `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${s.label}</span>`).join('');
+  return `<div class="legend">${legend}</div>${svg}`;
+}
+
+// ---- revenue by category ------------------------------------------------------
+function revenueChart(rows) {
+  const data = rows.map(r => ({
+    label: `${CATEGORY_EMOJI[r.category] || ''} ${r.category}`,
+    value: num(r.revenue_eur),
+    color: CATEGORY_COLOR[r.category] || 'var(--cat-bath)',
+  }));
+  return barChart({ data, valueFmt: v => fmtQ(v) });
+}
+
+// ---- assemble the page --------------------------------------------------------
+let prevData = null;
+
+function render(d) {
+  const conv = d.funnel.sessions ? (100 * num(d.funnel.purchased) / num(d.funnel.sessions)).toFixed(1) : '0.0';
+  const p = prevData;
+  const changed = {
+    revenue: p && num(p.totals.revenue_eur) !== num(d.totals.revenue_eur),
+    orders: p && num(p.totals.orders) !== num(d.totals.orders),
+    sessions: p && num(p.funnel.sessions) !== num(d.funnel.sessions),
+    conv: p && p.funnel.sessions && (100 * num(p.funnel.purchased) / num(p.funnel.sessions)).toFixed(1) !== conv,
+  };
+  $('content').innerHTML = `
+    <div class="tiles">
+      <div class="tile${changed.revenue ? ' pulse' : ''}"><div class="label">Total revenue (confirmed + shipped)</div><div class="value">${fmtQ(num(d.totals.revenue_eur))}</div></div>
+      <div class="tile${changed.orders ? ' pulse' : ''}"><div class="label">Orders taken home</div><div class="value">${num(d.totals.orders).toLocaleString('en')}</div></div>
+      <div class="tile${changed.sessions ? ' pulse' : ''}"><div class="label">Sessions</div><div class="value">${num(d.funnel.sessions).toLocaleString('en')}</div></div>
+      <div class="tile${changed.conv ? ' pulse' : ''}"><div class="label">Session &rarr; purchase</div><div class="value">${conv}%</div></div>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <h2>🦆 Conversion funnel</h2>
+        <div class="sub">Sessions that added to their flock, and of those, who took them home.</div>
+        ${funnelChart(d.funnel)}
+      </div>
+      <div class="card">
+        <h2>💰 Revenue by category</h2>
+        <div class="sub">Confirmed + shipped orders only.</div>
+        ${d.revenue_by_category.length ? revenueChart(d.revenue_by_category) : `<div class="empty">No revenue yet.</div>`}
+      </div>
+      <div class="card wide">
+        <h2>🌊 Retention</h2>
+        <div class="sub">Active users by weeks since their first visit — the pond drains, as ponds do.</div>
+        ${d.retention.length ? lineChart({ data: d.retention.map(r => ({ label: num(r.weeks_since), value: num(r.active_users) })), width: 1040 }) : `<div class="empty">No retention data yet.</div>`}
+      </div>
+      <div class="card wide">
+        <h2>📈 Daily activity</h2>
+        <div class="sub">Pageviews, add-to-flocks, and completed orders per day across the lake.</div>
+        ${d.daily.length ? multiLineChart(d.daily) : `<div class="empty">No events yet.</div>`}
+      </div>
+    </div>
+  `;
+  prevData = d;
+}
+
+const POLL_MS = 4000;
+let pollTimer = null, hasLoadedOnce = false;
+
+async function load(isManual) {
+  const btn = $('refreshBtn');
+  if (isManual) btn.classList.add('spin');
+  if (!hasLoadedOnce) {
+    $('dot').className = 'dot loading';
+    $('statusText').textContent = 'waddling the numbers together…';
+  }
+  try {
+    const res = await fetch('/dashboard-data');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    render(data);
+    hasLoadedOnce = true;
+    $('dot').className = 'dot ready';
+    $('statusText').textContent = `🔴 live · every ${POLL_MS / 1000}s · last update ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    if (!hasLoadedOnce) {
+      $('dot').className = 'dot';
+      $('statusText').textContent = 'the pond drained — see below';
+      $('content').innerHTML = `<div class="empty"><b>Couldn't load the dashboard.</b><br>
+        ${String(err.message || err)}<br><br>
+        Make sure you're running this via <code>python3 collector.py</code> (not a plain static server) —
+        the dashboard needs its live <code>/dashboard-data</code> endpoint.</div>`;
+    } else {
+      // a live dashboard shouldn't blank itself out over one bad tick — keep
+      // showing the last good numbers and just flag that the update failed.
+      $('dot').className = 'dot';
+      $('statusText').textContent = `⚠️ update failed (${String(err.message || err)}) — retrying…`;
+    }
+  } finally {
+    if (isManual) setTimeout(() => btn.classList.remove('spin'), 600);
+  }
+}
+
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') load(false);
+  }, POLL_MS);
+}
+
+// catch up immediately when the tab regains focus, instead of waiting out the interval
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') load(false);
+});
+
+$('refreshBtn').addEventListener('click', e => { e.preventDefault(); load(true); });
+load(false);
+startPolling();
+</script>
+</body>
+</html>
