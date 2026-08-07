@@ -81,6 +81,11 @@
     box-shadow:var(--shadow);padding:18px;margin-bottom:16px;
   }
   .card.wide{grid-column:1/-1}
+  .card.pulse{animation:cardPulse 1.1s ease}
+  @keyframes cardPulse{
+    0%{box-shadow:0 0 0 3px var(--accent), var(--shadow);border-color:var(--accent)}
+    100%{box-shadow:var(--shadow);border-color:var(--line)}
+  }
   .card h2{
     font-family:'Fredoka',sans-serif;font-weight:600;font-size:16px;margin:0 0 2px;
   }
@@ -286,6 +291,10 @@ function render(d) {
     orders: p && num(p.totals.orders) !== num(d.totals.orders),
     sessions: p && num(p.funnel.sessions) !== num(d.funnel.sessions),
     conv: p && p.funnel.sessions && (100 * num(p.funnel.purchased) / num(p.funnel.sessions)).toFixed(1) !== conv,
+    funnelChart: p && JSON.stringify(p.funnel) !== JSON.stringify(d.funnel),
+    revenueChart: p && JSON.stringify(p.revenue_by_category) !== JSON.stringify(d.revenue_by_category),
+    retentionChart: p && JSON.stringify(p.retention) !== JSON.stringify(d.retention),
+    dailyChart: p && JSON.stringify(p.daily) !== JSON.stringify(d.daily),
   };
   $('content').innerHTML = `
     <div class="tiles">
@@ -296,22 +305,22 @@ function render(d) {
     </div>
 
     <div class="cards">
-      <div class="card">
+      <div class="card${changed.funnelChart ? ' pulse' : ''}">
         <h2>🦆 Conversion funnel</h2>
         <div class="sub">Sessions that added to their flock, and of those, who took them home.</div>
         ${funnelChart(d.funnel)}
       </div>
-      <div class="card">
+      <div class="card${changed.revenueChart ? ' pulse' : ''}">
         <h2>💰 Revenue by category</h2>
         <div class="sub">Confirmed + shipped orders only.</div>
         ${d.revenue_by_category.length ? revenueChart(d.revenue_by_category) : `<div class="empty">No revenue yet.</div>`}
       </div>
-      <div class="card wide">
+      <div class="card wide${changed.retentionChart ? ' pulse' : ''}">
         <h2>🌊 Retention</h2>
         <div class="sub">Active users by weeks since their first visit — the pond drains, as ponds do.</div>
         ${d.retention.length ? lineChart({ data: d.retention.map(r => ({ label: num(r.weeks_since), value: num(r.active_users) })), width: 1040 }) : `<div class="empty">No retention data yet.</div>`}
       </div>
-      <div class="card wide">
+      <div class="card wide${changed.dailyChart ? ' pulse' : ''}">
         <h2>📈 Daily activity</h2>
         <div class="sub">Pageviews, add-to-flocks, and completed orders per day across the lake.</div>
         ${d.daily.length ? multiLineChart(d.daily) : `<div class="empty">No events yet.</div>`}
