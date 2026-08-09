@@ -15,12 +15,7 @@
   const COLLECTOR = (script && script.dataset.collector) || 'http://localhost:8787/collect';
   const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-  const uuid = () =>
-    (crypto.randomUUID && crypto.randomUUID()) ||
-    'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, c => {
-      const r = (Math.random() * 16) | 0;
-      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-    });
+  const uuid = () => crypto.randomUUID();
 
   function visitorId() {
     let v = localStorage.getItem('puddle_visitor');
@@ -39,14 +34,8 @@
   }
 
   function send(event) {
-    const body = JSON.stringify(event);
-    // sendBeacon survives unload; fall back to fetch for older browsers.
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(COLLECTOR, new Blob([body], { type: 'application/json' }));
-    } else {
-      fetch(COLLECTOR, { method: 'POST', body, keepalive: true,
-                         headers: { 'Content-Type': 'application/json' } }).catch(() => {});
-    }
+    // sendBeacon survives unload, unlike fetch.
+    navigator.sendBeacon(COLLECTOR, new Blob([JSON.stringify(event)], { type: 'application/json' }));
   }
 
   function track(eventType, props = {}) {

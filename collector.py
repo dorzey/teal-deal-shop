@@ -26,7 +26,7 @@ import duckdb
 
 ROOT       = os.path.dirname(os.path.abspath(__file__))
 PUBLIC     = os.path.join(ROOT, "public")
-PORT       = int(os.environ.get("PORT", "8787"))
+PORT       = 8787
 BATCH      = 20            # flush after this many buffered events
 FLUSH_SECS = 5.0            # …or this many seconds, whichever comes first
 COMPACT_SECS = 60.0         # how often to merge small lake files in the background
@@ -64,10 +64,10 @@ def _oltp():
 _buf, _lock, _next_id = [], threading.Lock(), 1_000_000  # live ids start high
 
 def _parse_ts(s):
-    try:
-        return dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).replace(tzinfo=None)
-    except Exception:
-        return dt.datetime.utcnow()
+    # tracker.js always sends a well-formed new Date().toISOString(); a
+    # malformed one (e.g. a hand-crafted /collect call) surfaces as a 400
+    # via do_POST's own try/except, same as any other bad payload.
+    return dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).replace(tzinfo=None)
 
 def enqueue(ev):
     """Normalise one tracker event into the lake schema and buffer it."""
@@ -176,38 +176,26 @@ def get_recommendations(user_id, limit=6):
 
 def get_dashboard():
     """Live marts, computed on demand from oltp.duckdb + the DuckLake catalog —
-    same logic as 04_marts.sql (sessionize -> funnel, cohort -> retention,
-    revenue rollup), just queried directly instead of via a separate
-    marts.duckdb build step, so the dashboard never goes stale behind live
-    orders/events."""
+    same shape as 04_marts.sql's funnel/retention/revenue, just expressed as
+    CTEs instead of intermediate tables, since this runs on every dashboard
+    poll and shouldn't write anything to disk on a path that shares a lock
+    with checkout."""
     con = _oltp()
     with _db_lock:
-        con.execute("""
-            CREATE OR REPLACE VIEW lake_events AS
-            SELECT * FROM lakehouse.events
-        """)
-        con.execute("""
-            CREATE OR REPLACE TABLE session_events AS
-            WITH gaps AS (
-                SELECT user_id, event_ts, event_type, product_id,
-                       event_ts - LAG(event_ts) OVER (PARTITION BY user_id ORDER BY event_ts) AS gap
-                FROM lake_events
-            ), flagged AS (
-                SELECT *, CASE WHEN gap IS NULL OR gap > INTERVAL 30 MINUTE THEN 1 ELSE 0 END AS is_new_session
-                FROM gaps
-            )
-            SELECT *, SUM(is_new_session) OVER (PARTITION BY user_id ORDER BY event_ts) AS session_num
-            FROM flagged
-        """)
-        con.execute("""
-            CREATE OR REPLACE TABLE sessions AS
-            SELECT hash(user_id, session_num) AS session_id, user_id,
-                   min(event_ts) AS started_at, count(*) AS num_events,
-                   bool_or(event_type = 'add_to_cart') AS reached_cart,
-                   bool_or(event_type = 'purchase')    AS reached_purchase
-            FROM session_events GROUP BY user_id, session_num
-        """)
         funnel = con.execute("""
+            WITH gaps AS (
+                SELECT user_id, event_ts, event_type,
+                       event_ts - LAG(event_ts) OVER (PARTITION BY user_id ORDER BY event_ts) AS gap
+                FROM lakehouse.events
+            ), session_events AS (
+                SELECT *, SUM(CASE WHEN gap IS NULL OR gap > INTERVAL 30 MINUTE THEN 1 ELSE 0 END)
+                          OVER (PARTITION BY user_id ORDER BY event_ts) AS session_num
+                FROM gaps
+            ), sessions AS (
+                SELECT bool_or(event_type = 'add_to_cart') AS reached_cart,
+                       bool_or(event_type = 'purchase')    AS reached_purchase
+                FROM session_events GROUP BY user_id, session_num
+            )
             SELECT count(*) AS sessions,
                    count(*) FILTER (WHERE reached_cart) AS carted,
                    count(*) FILTER (WHERE reached_purchase) AS purchased,
@@ -227,7 +215,7 @@ def get_dashboard():
 
         retention = con.execute("""
             WITH activity AS (
-                SELECT DISTINCT user_id, date_trunc('week', event_ts) AS active_week FROM lake_events
+                SELECT DISTINCT user_id, date_trunc('week', event_ts) AS active_week FROM lakehouse.events
             ), cohort AS (
                 SELECT user_id, min(active_week) AS cohort_week FROM activity GROUP BY user_id
             )
@@ -242,7 +230,7 @@ def get_dashboard():
                    count(*) FILTER (WHERE event_type = 'pageview')    AS pageviews,
                    count(*) FILTER (WHERE event_type = 'add_to_cart') AS carts,
                    count(*) FILTER (WHERE event_type = 'purchase')    AS purchases
-            FROM lake_events GROUP BY event_date ORDER BY event_date
+            FROM lakehouse.events GROUP BY event_date ORDER BY event_date
         """).fetchall()
 
         totals = con.execute("""
@@ -271,13 +259,6 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=PUBLIC, **k)
 
-    def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def do_OPTIONS(self):
-        self.send_response(204); self._cors(); self.end_headers()
-
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/recommendations":
@@ -302,7 +283,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _json(self, status, obj):
         body = json.dumps(obj).encode()
-        self.send_response(status); self._cors()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -315,9 +296,9 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = self._body()
                 for ev in (payload if isinstance(payload, list) else [payload]):
                     enqueue(ev)
-                self.send_response(204); self._cors(); self.end_headers()
+                self.send_response(204); self.end_headers()
             except Exception as e:
-                self.send_response(400); self._cors(); self.end_headers()
+                self.send_response(400); self.end_headers()
                 self.wfile.write(str(e).encode())
         elif path == "/order":
             try:

@@ -44,8 +44,10 @@ FROM (
 WHERE (user_id % 10) < (10 - week_idx);
 
 -- The full clickstream = product pageviews + some non-product browsing
--- + a funnel of carts (1/3 of views) and purchases (1/9 of views).
-CREATE OR REPLACE TABLE _events AS
+-- + a funnel of carts (1/3 of views) and purchases (1/9 of views), with a
+-- semi-structured JSON props column so the tracker's schema can evolve
+-- without a migration.
+CREATE OR REPLACE TABLE events AS
 WITH pageviews AS (          -- every interest touch is a product pageview
     SELECT id, user_id, 'pageview' AS event_type, product_id, ts FROM _interest
 ),
@@ -61,14 +63,13 @@ carts AS (                   -- 1 in 3 pageviews becomes an add_to_cart
 purchases AS (               -- 1 in 3 carts becomes a purchase (=> 1/9 of views)
     SELECT id + 300000, user_id, 'purchase', product_id, ts + INTERVAL 7 MINUTE
     FROM _interest WHERE id % 9 = 0
+),
+_events(id, user_id, event_type, product_id, ts) AS (
+    SELECT * FROM pageviews
+    UNION ALL SELECT * FROM browsing
+    UNION ALL SELECT * FROM carts
+    UNION ALL SELECT * FROM purchases
 )
-SELECT * FROM pageviews
-UNION ALL SELECT * FROM browsing
-UNION ALL SELECT * FROM carts
-UNION ALL SELECT * FROM purchases;
-
--- Final event shape, with a semi-structured JSON props column.
-CREATE OR REPLACE TABLE events AS
 SELECT
     row_number() OVER (ORDER BY ts, id)                   AS event_id,
     user_id,
@@ -106,5 +107,4 @@ FROM lakehouse.events;
 
 -- Tidy the scratch tables; the events live in the DuckLake catalog now.
 DROP TABLE _interest;
-DROP TABLE _events;
 DROP TABLE events;
