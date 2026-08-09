@@ -37,6 +37,16 @@ server**. So:
 **The unverified rows are the most likely source of "it's not working."** Weight
 your suspicion accordingly.
 
+**Update since this handover was written:** the clickstream lake (`03_lake.sql`,
+`collector.py`) was migrated from a bare Parquet directory to a real DuckLake
+catalog (`puddle_catalog.ducklake` + `lakehouse_data/`) — this is no longer an
+optional/isolated tier, the extension is now required for the *core* pipeline
+(`run.sh`), by explicit choice, trading away the original "no network needed"
+guarantee below. `public/`, `collector.py`'s live server, real checkout,
+recommendations, and `public/dashboard.html` were all built and verified in a
+real browser during that later work — the rows above describing them as
+unverified are stale.
+
 ---
 
 ## Environment requirements
@@ -47,8 +57,10 @@ your suspicion accordingly.
   (`QUALIFY`, list literals, `FROM GRAPH_TABLE`); prefer ≥ 1.4.
 - **Python 3.9+** with the `duckdb` module for `collector.py`:
   `pip install duckdb` (tested with duckdb **1.5.5**).
-- **Network access to the extension hosts** for `05_extras.sql` and
-  `06_ducklake.sql` only. The core needs no extensions.
+- **Network access to the extension hosts.** `run.sh` now installs the
+  `ducklake` extension as part of the core pipeline (cached after the first
+  run); `05_extras.sql` and `06_ducklake.sql` need network for their own
+  extensions too.
 - A browser + a static server for the WASM demo (details in its section).
 
 ---
@@ -59,14 +71,16 @@ your suspicion accordingly.
 ./run.sh          # DUCKDB=/path/to/duckdb ./run.sh  if duckdb isn't on PATH
 ```
 
-`run.sh` deletes `oltp.duckdb`/`marts.duckdb`, wipes `lake/`, then runs
-`01→03` against `oltp.duckdb`, exports `public/catalog.parquet`, and runs
-`04` against `marts.duckdb`. Expected checkpoints:
+`run.sh` deletes `oltp.duckdb`/`marts.duckdb`/`puddle_catalog.ducklake`, wipes
+`lakehouse_data/`, then runs `01→03` against `oltp.duckdb`, exports
+`public/catalog.parquet`, and runs `04` against `marts.duckdb`. Expected
+checkpoints:
 
 - **01 seed:** `users 500`, `products 60`, `orders 400`, `order_items ~600`.
 - **02 oltp:** a new order **id 401**; product 3 stock decremented by 2.
-- **03 lake:** `pageview 4800`, `add_to_cart 1333`, `purchase 444`, **31** day
-  partitions under `lake/events/event_date=*/`.
+- **03 lake:** `events 5343`, `pageviews 3920`, `carts 1067`, `purchases 356`,
+  **31** day partitions, landed as three DuckLake snapshots (one per
+  chronological wave) instead of a Parquet directory.
 - **04 marts — funnel:** `sessions 3200`, `view_to_cart_pct 33.3`,
   `cart_to_purchase_pct 33.4`.
 - **04 marts — revenue_by_category:** **all four** of `bath / collectible /
@@ -90,8 +104,9 @@ python3 collector.py        # serves storefront + collects, http://localhost:878
 ```
 
 Open the URL, search, click **Add to cart** (a toast says "event sent"). The
-collector appends events to `lake/` as `live_*.parquet` in the **same schema**
-the marts read. Then:
+collector inserts events into the DuckLake catalog's `events` table, in the
+**same schema** the marts read. Then (after stopping the collector — see
+below):
 
 ```bash
 duckdb marts.duckdb -f 04_marts.sql   # funnel/retention now include your clicks
@@ -101,11 +116,20 @@ Design notes for debugging:
 - The collector **serves the storefront itself** so the tracker posts
   same-origin — this avoids CORS on `sendBeacon`. Don't "helpfully" split them
   onto two origins without adding CORS.
-- It's a **single writer**: one process, one DuckDB connection (mirrors the OLTP
-  tier). Paths are resolved relative to the script, so **run it from the repo
-  root** (or fix the `ROOT`/`PUBLIC`/`LAKE` constants).
-- Events buffer and flush on size (`BATCH=20`) or every `FLUSH_SECS=5`. For a
-  quick test, drop those or hit Ctrl-C (it flushes on exit).
+- It's a **single writer** for real now, not just by convention: `collector.py`
+  holds one shared connection with **both** `oltp.duckdb` and the DuckLake
+  catalog attached (orders, recommendations, the dashboard, and event flushes
+  all go through it). A local-file DuckLake catalog is itself just a DuckDB
+  file, so only one process can have it attached at a time — `04_marts.sql`,
+  `06_ducklake.sql`, or an ad-hoc `duckdb` shell will all fail with a lock
+  conflict while the collector is running. Stop it first. Paths are resolved
+  relative to the script for `oltp.duckdb`, but the DuckLake catalog path must
+  stay **relative** (`puddle_catalog.ducklake`) to match what `03_lake.sql`
+  created it with — so **run it from the repo root**.
+- Events buffer and flush on size (`BATCH=20`) or every `FLUSH_SECS=5`, then
+  a background thread calls `ducklake_merge_adjacent_files` every
+  `COMPACT_SECS=60` to keep that from fragmenting into lots of tiny files.
+  For a quick test, drop the batch settings or hit Ctrl-C (it flushes on exit).
 
 ### `05_extras.sql` — fts / vss / spatial / DuckPGQ (needs network)
 
@@ -126,25 +150,22 @@ duckdb oltp.duckdb -f 05_extras.sql
   `MATCH`/`COLUMNS` clause for the installed DuckPGQ version — reconcile against
   that version's README.
 
-### `06_ducklake.sql` — DuckLake catalog + time travel (needs network)
+### `06_ducklake.sql` — explore the live DuckLake catalog: snapshots + time travel
 
 ```bash
-duckdb -f 06_ducklake.sql
+duckdb -f 06_ducklake.sql   # stop collector.py first if it's running
 ```
 
-**Entirely unverified.** It `ATTACH`es a DuckLake catalog, ingests the lake in
-three chronological waves (three snapshots), then exercises:
-`ducklake_snapshots('lakehouse')`, `events AT (VERSION => n)`,
-`ducklake_table_changes('lakehouse','events',1,3)`.
-
-If it fails, the most probable cause is **DuckLake API drift** — the extension
-moved fast. Things to check against the installed `ducklake` version's docs:
-- `ATTACH 'ducklake:...' AS lakehouse (DATA_PATH '...')` spelling/options.
-- Whether the snapshot table function is `ducklake_snapshots(<db>)` and its
-  column names (`snapshot_id`, `snapshot_time`, `schema_version`).
-- Time-travel syntax: `AT (VERSION => n)` vs `AT (SNAPSHOT_ID => n)` vs
-  `AT (TIMESTAMP => …)`.
-- The `ducklake_table_changes(...)` signature and its `change_type` column.
+**Verified working**, including against a catalog with real live-traffic
+snapshots on top of the seed data (not just fresh out of `run.sh`). Since
+`03_lake.sql` now lands the seed directly into the DuckLake catalog (three
+chronological waves = three real snapshots, snapshot versions **2, 3, 4** —
+version 1 is the empty table right after creation), this script no longer
+ingests anything itself — it just explores what's already there via
+`ducklake_snapshots('lakehouse')`, `events AT (VERSION => n)`, and
+`ducklake_table_changes('lakehouse', 'main', 'events', 1, 4)`. If you've run
+`collector.py` since seeding, expect a higher max snapshot than the script's
+comments assume — that's expected, not a bug.
 
 ### `public/` — DuckDB-WASM catalog search
 
@@ -212,11 +233,11 @@ installed extension version and the specific syntax that changed.
 run.sh            orchestrator (resets + builds core, exports catalog)
 01_seed.sql       OLTP schema, constraints, synthetic data
 02_oltp.sql       place-order transaction + oversell/rollback demo
-03_lake.sql       synthesizes a month of clickstream -> lake/ Parquet
-04_marts.sql      sessions, funnel, retention, revenue (ATTACH oltp + read lake)
+03_lake.sql       synthesizes a month of clickstream -> DuckLake catalog (needs network)
+04_marts.sql      sessions, funnel, retention, revenue (ATTACH oltp + DuckLake catalog)
 05_extras.sql     fts / vss / spatial / DuckPGQ            (needs network)
-06_ducklake.sql   DuckLake catalog: snapshots + time travel (needs network)
-collector.py      single-writer event collector + storefront server
+06_ducklake.sql   explore the live catalog: snapshots + time travel (needs network)
+collector.py      single-writer collector: storefront + events + real checkout + live stats
 public/index.html DuckDB-WASM catalog search UI
 public/tracker.js browser tracker (pageview / add_to_cart)
 public/catalog.parquet  pre-exported catalog for the WASM demo

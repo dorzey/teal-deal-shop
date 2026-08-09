@@ -2,17 +2,25 @@
 -- 04_marts.sql  —  Downstream analytics (marts.duckdb)
 --
 -- Where DuckDB earns its keep. Run with marts.duckdb as the current database;
--- it ATTACHes the OLTP store read-only and reads the Parquet lake directly, so
--- one query can span the transactional tier and the clickstream lake at once.
+-- it ATTACHes the OLTP store read-only and the DuckLake clickstream catalog,
+-- so one query can span the transactional tier and the clickstream lake at
+-- once.
 --
 --   duckdb marts.duckdb -f 04_marts.sql
+--
+-- NOTE: a local-file DuckLake catalog is itself just a DuckDB file, so — like
+-- oltp.duckdb — only one process can have it attached at a time. If
+-- collector.py is running (it holds both attached for the life of the
+-- server), stop it first; otherwise this ATTACH fails with a lock conflict.
 -- ============================================================================
 
+INSTALL ducklake;
 ATTACH IF NOT EXISTS 'oltp.duckdb' AS oltp (READ_ONLY);
+ATTACH IF NOT EXISTS 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
 
--- Convenience view over the hive-partitioned lake.
+-- Convenience view over the DuckLake clickstream catalog.
 CREATE OR REPLACE VIEW lake_events AS
-SELECT * FROM read_parquet('lake/events/**/*.parquet', hive_partitioning = true);
+SELECT * FROM lakehouse.events;
 
 -- ---- 1. Sessionization: 30-min inactivity gap => new session ----------------
 CREATE OR REPLACE TABLE session_events AS

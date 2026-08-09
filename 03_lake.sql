@@ -1,13 +1,30 @@
 -- ============================================================================
--- 03_lake.sql  —  Web analytics / clickstream lake (Parquet on disk)
+-- 03_lake.sql  —  Web analytics / clickstream lake (DuckLake catalog)
 --
 -- A JS tracker fires pageview / add_to_cart / purchase events; a collector
--- appends them to the lake as Parquet, partitioned by day. This is the
--- "append-only truth" that DuckLake would give you a catalog over — here we
--- keep it as plain hive-partitioned Parquet so it runs with zero extensions.
+-- appends them to the lake. This is the "append-only truth" — landed here as
+-- a real DuckLake catalog (a transactional catalog over Parquet: every INSERT
+-- is a snapshot, so 06_ducklake.sql can time-travel and diff it) instead of a
+-- bare hive-partitioned Parquet directory. Needs network the first time, to
+-- download the `ducklake` extension.
 -- Payloads stay semi-structured in a JSON column so the tracker can evolve
 -- without a schema migration.
 -- ============================================================================
+
+INSTALL ducklake;
+
+-- Catalog metadata in a local file; data files land under lakehouse_data/.
+ATTACH 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
+
+CREATE TABLE IF NOT EXISTS lakehouse.events (
+    event_id   BIGINT,
+    user_id    BIGINT,
+    event_type VARCHAR,
+    product_id BIGINT,
+    event_ts   TIMESTAMP,
+    event_date DATE,
+    props      JSON
+);
 
 -- Deterministic "interest" backbone: a (user, product, time) touch.
 CREATE OR REPLACE TABLE _interest AS
@@ -66,9 +83,18 @@ SELECT
     }) AS props
 FROM _events;
 
--- Land it in the lake as day-partitioned Parquet (hive layout).
-COPY events TO 'lake/events'
-     (FORMAT PARQUET, PARTITION_BY (event_date), OVERWRITE_OR_IGNORE);
+-- Land it in the lake in three chronological waves — each INSERT is its own
+-- transaction, so this leaves three real snapshots for 06_ducklake.sql to
+-- travel between, right out of the box.
+INSERT INTO lakehouse.events
+SELECT * FROM events WHERE event_date < DATE '2025-03-11';          -- snapshot: early March
+
+INSERT INTO lakehouse.events
+SELECT * FROM events
+WHERE event_date >= DATE '2025-03-11' AND event_date < DATE '2025-03-21';  -- snapshot: mid March
+
+INSERT INTO lakehouse.events
+SELECT * FROM events WHERE event_date >= DATE '2025-03-21';         -- snapshot: late March
 
 SELECT 'lake written' AS status,
        count(*)                                   AS events,
@@ -76,8 +102,9 @@ SELECT 'lake written' AS status,
        count(*) FILTER (WHERE event_type='pageview')    AS pageviews,
        count(*) FILTER (WHERE event_type='add_to_cart') AS carts,
        count(*) FILTER (WHERE event_type='purchase')    AS purchases
-FROM events;
+FROM lakehouse.events;
 
--- Tidy the scratch tables; the events live in the `events` table + the lake now.
+-- Tidy the scratch tables; the events live in the DuckLake catalog now.
 DROP TABLE _interest;
 DROP TABLE _events;
+DROP TABLE events;

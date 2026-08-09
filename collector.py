@@ -2,40 +2,65 @@
 """
 collector.py — Puddle's single-writer event collector.
 
-One process, one DuckDB write connection: the same "single writer" discipline
-the OLTP tier uses, now for the clickstream. It:
+One process, one DuckDB connection to oltp.duckdb (with the DuckLake catalog
+attached alongside it — see _oltp()): the same "single writer" discipline the
+OLTP tier uses, now for the clickstream too. It:
 
   • serves the storefront from ./public  (so the tracker posts same-origin)
-  • accepts POST /collect events and appends them to ./lake as Parquet,
+  • accepts POST /collect events and appends them to the DuckLake catalog,
     in the SAME schema 04_marts.sql reads — live events land in the funnel.
   • GET /dashboard-data computes that same funnel/retention/revenue live,
     straight from oltp.duckdb + the lake, for public/dashboard.html.
 
 Run from the repo root:   python3 collector.py    ->    http://localhost:8787/
-Batches flush on size or every few seconds; each flush writes uniquely-named
-Parquet files under lake/events/event_date=<d>/ so nothing is ever overwritten.
+Events batch on size or every few seconds, then INSERT as one transaction —
+DuckLake gives every insert a snapshot, so a periodic background call to
+ducklake_merge_adjacent_files() keeps that from turning into thousands of
+tiny files (see _compactor()) instead of the app hand-rolling file layout.
 """
-import json, os, sys, threading, time, uuid, datetime as dt
+import json, os, sys, threading, time, datetime as dt
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 import duckdb
 
-ROOT      = os.path.dirname(os.path.abspath(__file__))
-PUBLIC    = os.path.join(ROOT, "public")
-LAKE      = os.path.join(ROOT, "lake", "events")
-PORT      = int(os.environ.get("PORT", "8787"))
-BATCH     = 20            # flush after this many buffered events
-FLUSH_SECS = 5.0         # …or this many seconds, whichever comes first
+ROOT       = os.path.dirname(os.path.abspath(__file__))
+PUBLIC     = os.path.join(ROOT, "public")
+PORT       = int(os.environ.get("PORT", "8787"))
+BATCH      = 20            # flush after this many buffered events
+FLUSH_SECS = 5.0            # …or this many seconds, whichever comes first
+COMPACT_SECS = 60.0         # how often to merge small lake files in the background
 
-# ---- the single writer -----------------------------------------------------
-_con = duckdb.connect()  # in-memory staging; the durable store is Parquet
-_con.execute("""
-  CREATE TABLE stage (
-    event_id BIGINT, user_id BIGINT, event_type VARCHAR, product_id BIGINT,
-    event_ts TIMESTAMP, event_date DATE, props JSON
-  )
-""")
+# Relative, matching 03_lake.sql/04_marts.sql/06_ducklake.sql exactly — DuckLake
+# stores the DATA_PATH string given at catalog-creation time and requires later
+# ATTACHes to match it verbatim (relative vs. absolute counts as a mismatch),
+# so this can't be ROOT-absolute like oltp.duckdb's path below. Consistent with
+# those scripts, and this file's own docstring: run collector.py from the repo root.
+DUCKLAKE_CATALOG = "puddle_catalog.ducklake"
+DUCKLAKE_DATA    = "lakehouse_data"
+
+# ---- the single writer: both oltp.duckdb AND the DuckLake catalog ----------
+# A local-file DuckLake catalog is itself just a DuckDB file, so — like
+# oltp.duckdb — only one connection anywhere can have it attached at a time;
+# a second attach attempt (even from a second connection in this SAME
+# process) fails with a lock/handle conflict. So there's exactly one shared
+# connection for orders, recommendations, the dashboard, AND event writes,
+# guarded by one lock. Connects lazily so importing this module (as the
+# collection-path tests do) never touches either file.
+_oltp_con, _db_lock = None, threading.Lock()
+
+def _oltp():
+    global _oltp_con
+    if _oltp_con is None:
+        con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
+        con.execute("INSTALL ducklake")
+        con.execute(
+            f"ATTACH 'ducklake:{DUCKLAKE_CATALOG}' AS lakehouse (DATA_PATH '{DUCKLAKE_DATA}/')"
+        )
+        _oltp_con = con
+    return _oltp_con
+
+# ---- event buffering ---------------------------------------------------------
 _buf, _lock, _next_id = [], threading.Lock(), 1_000_000  # live ids start high
 
 def _parse_ts(s):
@@ -73,22 +98,10 @@ def flush():
         if not _buf:
             return
         rows, _buf[:] = list(_buf), []
-    _con.executemany("INSERT INTO stage VALUES (?,?,?,?,?,?,?)", rows)
-    dates = [r[0] for r in _con.execute(
-        "SELECT DISTINCT event_date FROM stage ORDER BY 1").fetchall()]
-    for d in dates:
-        part = os.path.join(LAKE, f"event_date={d.isoformat()}")
-        os.makedirs(part, exist_ok=True)
-        out = os.path.join(part, f"live_{uuid.uuid4().hex[:12]}.parquet")
-        _con.execute(f"""
-            COPY (SELECT event_id, user_id, event_type, product_id, event_ts,
-                         event_date, props
-                  FROM stage WHERE event_date = DATE '{d.isoformat()}')
-            TO '{out}' (FORMAT PARQUET)
-        """)
-    n = _con.execute("SELECT count(*) FROM stage").fetchone()[0]
-    _con.execute("DELETE FROM stage")
-    print(f"[collector] flushed {n} event(s) across {len(dates)} day partition(s)", flush=True)
+    con = _oltp()
+    with _db_lock:
+        con.executemany("INSERT INTO lakehouse.events VALUES (?,?,?,?,?,?,?)", rows)
+    print(f"[collector] flushed {len(rows)} event(s) to the lake", flush=True)
 
 def _flusher():
     while True:
@@ -96,17 +109,19 @@ def _flusher():
         try: flush()
         except Exception as e: print("[collector] flush error:", e, file=sys.stderr)
 
-# ---- the other single writer: real orders against oltp.duckdb --------------
-# Same single-writer discipline as 02_oltp.sql, just held open for the life of
-# the server instead of one script run. Connects lazily so importing this
-# module (as the collection-path tests do) never touches oltp.duckdb.
-_oltp_con, _order_lock = None, threading.Lock()
-
-def _oltp():
-    global _oltp_con
-    if _oltp_con is None:
-        _oltp_con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
-    return _oltp_con
+def _compactor():
+    """Small-file cleanup: DuckLake gives every INSERT its own file(s), so a
+    busy lake fragments the same way the old hand-rolled Parquet writer did.
+    ducklake_merge_adjacent_files() is the documented fix — run it, don't
+    reinvent it in Python."""
+    while True:
+        time.sleep(COMPACT_SECS)
+        try:
+            with _db_lock:
+                _oltp().execute("CALL ducklake_merge_adjacent_files('lakehouse')")
+            print("[collector] compacted the lake", flush=True)
+        except Exception as e:
+            print("[collector] compaction error:", e, file=sys.stderr)
 
 def place_order(user_id, items):
     """All-or-nothing: allocate an order, decrement stock, write line items.
@@ -115,7 +130,7 @@ def place_order(user_id, items):
     if not items:
         raise ValueError("cart is empty")
     con = _oltp()
-    with _order_lock:
+    with _db_lock:
         con.execute("BEGIN TRANSACTION")
         try:
             con.execute("INSERT INTO orders (user_id) VALUES (?)", [user_id])
@@ -139,7 +154,7 @@ def get_recommendations(user_id, limit=6):
     user's own orders, then rank what else showed up in those orders. Plain
     SQL, no extension needed, so it's safe to run on every request."""
     con = _oltp()
-    with _order_lock:
+    with _db_lock:
         rows = con.execute("""
             WITH my_products AS (
                 SELECT DISTINCT oi.product_id
@@ -160,16 +175,16 @@ def get_recommendations(user_id, limit=6):
     return [r[0] for r in rows]
 
 def get_dashboard():
-    """Live marts, computed on demand from oltp.duckdb + the Parquet lake — same
-    logic as 04_marts.sql (sessionize -> funnel, cohort -> retention, revenue
-    rollup), just queried directly instead of via a separate marts.duckdb build
-    step, so the dashboard never goes stale behind live orders/events."""
+    """Live marts, computed on demand from oltp.duckdb + the DuckLake catalog —
+    same logic as 04_marts.sql (sessionize -> funnel, cohort -> retention,
+    revenue rollup), just queried directly instead of via a separate
+    marts.duckdb build step, so the dashboard never goes stale behind live
+    orders/events."""
     con = _oltp()
-    lake_glob = os.path.join(ROOT, "lake", "events", "**", "*.parquet")
-    with _order_lock:
-        con.execute(f"""
+    with _db_lock:
+        con.execute("""
             CREATE OR REPLACE VIEW lake_events AS
-            SELECT * FROM read_parquet('{lake_glob}', hive_partitioning = true)
+            SELECT * FROM lakehouse.events
         """)
         con.execute("""
             CREATE OR REPLACE TABLE session_events AS
@@ -318,8 +333,9 @@ class Handler(SimpleHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    os.makedirs(LAKE, exist_ok=True)
+    _oltp()  # connect + attach the lake right away, so startup fails loudly, not on first request
     threading.Thread(target=_flusher, daemon=True).start()
+    threading.Thread(target=_compactor, daemon=True).start()
     print(f"[collector] storefront + tracking on http://localhost:{PORT}/  (Ctrl-C to stop)")
     try:
         ThreadingHTTPServer(("", PORT), Handler).serve_forever()
