@@ -24,27 +24,39 @@ public/dashboard.html   funnel/revenue/retention, live from oltp.duckdb + the la
 ## Run it
 
 ```bash
-./run.sh                      # builds oltp.duckdb, marts.duckdb, the DuckLake catalog, public/catalog.parquet
+./run.sh                      # builds everything, then serves it — no extra steps
 ```
 
-Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`).
-The clickstream lake is a real DuckLake catalog, so `run.sh` needs network the
-first time to install the `ducklake` extension (cached after that) — that's
-now a core dependency, not just an optional tier.
+That's genuinely everything: seeds OLTP, lands the clickstream in a DuckLake
+catalog, exports the browser catalog, builds the marts, runs the extensions
+showcase and the snapshot/time-travel exploration (both best-effort — see
+below), then starts `collector.py` itself as its last act:
 
-Then the optional layers:
+- **http://localhost:8787/** — the storefront, DuckDB-WASM catalog search + real checkout
+- **http://localhost:8787/dashboard.html** — Duck HQ, the live dashboard
+
+Ctrl-C stops it (flushes cleanly on exit). Re-running `./run.sh` is always
+safe — it stops whatever server a previous run left up before rebuilding, so
+you never get a "port already in use" error.
+
+Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
+`pip install duckdb` for `collector.py`. Also needs network: the DuckLake
+catalog (`03_lake.sql`) requires it on the first run to install the
+`ducklake` extension (cached after that) — that's a core dependency now, not
+an optional tier. `05_extras.sql` (fts/vss/spatial/DuckPGQ) and
+`06_ducklake.sql` (snapshot exploration) also run automatically as part of
+`./run.sh`, but **best-effort**: if their extensions can't be reached (e.g.
+the community `duckpgq` host is down), `run.sh` logs it and keeps going
+rather than failing the whole build over an optional demo tier.
+
+Want to re-run one piece by hand instead — e.g. after editing `05_extras.sql`
+— without rebuilding everything? Stop the collector first (only one process
+can have the DuckLake catalog attached at a time), then:
 
 ```bash
-# Live event tracking — serves the storefront AND collects real events:
-python3 collector.py                           # http://localhost:8787/  (needs duckdb, pip install duckdb)
-#   → open it, search, click "Add to cart"; each click POSTs an event that the
-#     collector inserts into the DuckLake catalog. Stop the collector, then
-#     re-run 04_marts.sql and the live events show up in the funnel and
-#     retention alongside the synthetic ones (only one process can have the
-#     catalog attached at a time).
-
-duckdb -f 06_ducklake.sql                       # explore the live catalog: snapshots + time travel (needs network)
-duckdb oltp.duckdb -f 05_extras.sql             # fts / vss / spatial / DuckPGQ   (needs network)
+duckdb oltp.duckdb -f 05_extras.sql             # fts / vss / spatial / DuckPGQ
+duckdb -f 06_ducklake.sql                       # explore the live catalog: snapshots + time travel
+duckdb marts.duckdb -f 04_marts.sql             # rebuild marts after live collector.py traffic
 ```
 
 ## The tiers

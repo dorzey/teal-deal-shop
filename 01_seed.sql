@@ -90,9 +90,12 @@ SELECT
     ['confirmed','confirmed','confirmed','shipped','cancelled'][(hash(id) % 5)::BIGINT + 1]
 FROM range(1, 401) t(id);
 
--- 1–2 deterministic line items per order. Two different product formulas so
--- category and order status don't correlate (otherwise a whole category can
--- end up only ever in cancelled orders).
+-- 1-3 deterministic line items per order. Three different product formulas
+-- so category and order status don't correlate (otherwise a whole category
+-- can end up only ever in cancelled orders), and dense enough that most
+-- products share a basket with several others — collector.py's "shoppers
+-- like you also got" is real collaborative filtering over this co-purchase
+-- history, and it needs actual overlap to have anything to say.
 INSERT INTO order_items
 SELECT o.order_id, p.product_id,
        ((o.order_id + p.product_id) % 3) + 1 AS qty,
@@ -106,11 +109,21 @@ SELECT o.order_id, p.product_id,
        p.price_cents
 FROM orders o
 JOIN products p ON p.product_id = ((o.order_id * 7 + 29) % 60) + 1
-WHERE o.order_id % 2 = 0                              -- ~half get a second item
-  AND ((o.order_id * 7 + 29) % 60) + 1
+WHERE ((o.order_id * 7 + 29) % 60) + 1
       <> ((o.order_id * 3 + 7) % 60) + 1;             -- avoid PK clash with item 1
 
+INSERT INTO order_items
+SELECT o.order_id, p.product_id,
+       ((o.order_id * 5 + p.product_id) % 2) + 1 AS qty,
+       p.price_cents
+FROM orders o
+JOIN products p ON p.product_id = ((o.order_id * 11 + 41) % 60) + 1
+WHERE o.order_id % 3 <> 0                             -- ~2/3 get a third item
+  AND ((o.order_id * 11 + 41) % 60) + 1 <> ((o.order_id * 3 + 7) % 60) + 1   -- avoid clash with item 1
+  AND ((o.order_id * 11 + 41) % 60) + 1 <> ((o.order_id * 7 + 29) % 60) + 1; -- avoid clash with item 2
+
 SELECT 'seed complete' AS status,
-       (SELECT count(*) FROM users)    AS users,
-       (SELECT count(*) FROM products) AS products,
-       (SELECT count(*) FROM orders)   AS orders;
+       (SELECT count(*) FROM users)       AS users,
+       (SELECT count(*) FROM products)    AS products,
+       (SELECT count(*) FROM orders)      AS orders,
+       (SELECT count(*) FROM order_items) AS order_items;

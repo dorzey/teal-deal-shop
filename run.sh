@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Puddle — build the whole toy platform from scratch.
+# Puddle — build the whole toy platform from scratch, then serve it.
 # Override the binary with:  DUCKDB=/path/to/duckdb ./run.sh
+# When this finishes building, it starts the live server itself — no extra
+# steps. Ctrl-C stops it (it flushes cleanly on exit). Re-running ./run.sh
+# stops any server left over from a previous run first, so it's always safe
+# to just run it again.
 set -euo pipefail
 DUCKDB="${DUCKDB:-duckdb}"
 cd "$(dirname "$0")"
 
 echo "==> reset"
+pkill -INT -f "python3 collector.py" 2>/dev/null || true   # SIGINT so it flushes + closes cleanly, like Ctrl-C
 rm -f oltp.duckdb marts.duckdb puddle_catalog.ducklake
 rm -rf lakehouse_data && mkdir -p public
 
@@ -30,20 +35,24 @@ echo "==> --  export product catalog for the browser demo"
 echo "==> 04  build marts (attaches OLTP read-only + the DuckLake catalog)"
 "$DUCKDB" marts.duckdb -f 04_marts.sql
 
+echo "==> 05  extensions showcase: fts / vss / spatial / DuckPGQ (best effort — needs network)"
+if ! "$DUCKDB" oltp.duckdb -f 05_extras.sql; then
+  echo "    05_extras.sql failed (likely no network/extension access) — continuing without it"
+fi
+
+echo "==> 06  explore the lake's snapshots + time travel (best effort — needs network)"
+if ! "$DUCKDB" -f 06_ducklake.sql; then
+  echo "    06_ducklake.sql failed (likely no network/extension access) — continuing without it"
+fi
+
 cat <<EOF
 
 Built: oltp.duckdb, marts.duckdb, puddle_catalog.ducklake (+ lakehouse_data/), public/catalog.parquet
 
-Next:
-  • Explore the lake's snapshots + time travel:
-        $DUCKDB -f 06_ducklake.sql
-  • Extensions showcase (fts / vss / spatial / DuckPGQ):
-        $DUCKDB oltp.duckdb -f 05_extras.sql          # needs network for extensions
-  • Browser catalog search + live tracking (DuckDB-WASM):
-        python3 collector.py                          # then open http://localhost:8787
-  • Duck HQ — live funnel/revenue/retention dashboard, no rebuild needed:
-        (same collector.py)                           # then open http://localhost:8787/dashboard.html
-
-NOTE: only one process can have the DuckLake catalog attached at a time —
-stop collector.py before running 04_marts.sql / 06_ducklake.sql by hand.
+==> starting the live storefront + tracking + Duck HQ dashboard
+        http://localhost:8787/                  storefront
+        http://localhost:8787/dashboard.html    live dashboard
+    Ctrl-C to stop (flushes cleanly on exit)
 EOF
+
+exec python3 collector.py

@@ -152,7 +152,14 @@ def get_recommendations(user_id, limit=6):
     """"Shoppers like you also got" — real collaborative filtering over order
     history in oltp.duckdb: find other orders that share a product with this
     user's own orders, then rank what else showed up in those orders. Plain
-    SQL, no extension needed, so it's safe to run on every request."""
+    SQL, no extension needed, so it's safe to run on every request.
+
+    Co-purchase overlap is real but sparse — plenty of users/products just
+    don't share a basket with anything, even in the denser seed data — so
+    this ranks genuine collaborative-filtering hits first (tier 0) and pads
+    out to `limit` with best-sellers overall (tier 1) when there aren't
+    enough. A user with zero order history still gets the best-seller list,
+    since my_products is simply empty for them."""
     con = _oltp()
     with _db_lock:
         rows = con.execute("""
@@ -164,12 +171,27 @@ def get_recommendations(user_id, limit=6):
             cohort_orders AS (
                 SELECT DISTINCT oi.order_id
                 FROM order_items oi JOIN my_products mp USING (product_id)
+            ),
+            collaborative AS (
+                SELECT oi.product_id, count(DISTINCT oi.order_id) AS freq, 0 AS tier
+                FROM order_items oi JOIN cohort_orders co USING (order_id)
+                WHERE oi.product_id NOT IN (SELECT product_id FROM my_products)
+                GROUP BY oi.product_id
+            ),
+            popular AS (
+                SELECT oi.product_id, count(DISTINCT oi.order_id) AS freq, 1 AS tier
+                FROM order_items oi
+                WHERE oi.product_id NOT IN (SELECT product_id FROM my_products)
+                  AND oi.product_id NOT IN (SELECT product_id FROM collaborative)
+                GROUP BY oi.product_id
+            ),
+            ranked AS (
+                SELECT * FROM collaborative
+                UNION ALL
+                SELECT * FROM popular
             )
-            SELECT oi.product_id, count(DISTINCT oi.order_id) AS freq
-            FROM order_items oi JOIN cohort_orders co USING (order_id)
-            WHERE oi.product_id NOT IN (SELECT product_id FROM my_products)
-            GROUP BY oi.product_id
-            ORDER BY freq DESC, oi.product_id
+            SELECT product_id FROM ranked
+            ORDER BY tier, freq DESC, product_id
             LIMIT ?
         """, [user_id, limit]).fetchall()
     return [r[0] for r in rows]

@@ -261,30 +261,26 @@
   }
   .empty b{color:var(--ink);font-family:'Fredoka',sans-serif}
 
-  /* signature: live query console */
+  /* signature: live query console — every query DuckDB-WASM actually runs,
+     not just the search box's, captured by wrapping conn.query() once */
   .console{
     position:fixed;left:0;right:0;bottom:0;background:#14282E;color:#CFE0E6;
     border-top:1px solid #1E3A45;
   }
-  .console .inner{max-width:1120px;margin:0 auto;padding:12px 20px;display:flex;gap:18px;align-items:center}
+  .console .inner{max-width:1120px;margin:0 auto;padding:10px 20px;display:flex;gap:18px;align-items:flex-start}
   .console .label{
     font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;
-    text-transform:uppercase;color:#5F8494;flex:none;
+    text-transform:uppercase;color:#5F8494;flex:none;padding-top:3px;
   }
-  .console pre{
-    font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.5;margin:0;
-    white-space:pre-wrap;flex:1;color:#DCEAF0;max-height:64px;overflow:auto;
-  }
-  .console .kw{color:#79C0D6}
-  .console .str{color:var(--accent)}
-  .console .perf{
-    flex:none;font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right;
-    display:flex;flex-direction:column;gap:2px;
-  }
-  .console .perf .ms{color:var(--accent);font-weight:500;font-size:15px}
-  .console .perf .rows{color:#5F8494}
+  .qlog{flex:1;max-height:112px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+  .qrow{display:flex;gap:14px;align-items:baseline;font-family:'JetBrains Mono',monospace;font-size:12px}
+  .qrow pre{margin:0;flex:1;color:#DCEAF0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .kw{color:#79C0D6}
+  .qrow .str{color:var(--accent)}
+  .qrow .qms{flex:none;color:var(--accent);min-width:64px;text-align:right}
+  .qrow .qrows{flex:none;color:#5F8494;min-width:52px;text-align:right}
   @media (max-width:640px){
-    .console pre{display:none}
+    .qrow pre{display:none}
     .price{min-width:180px}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -356,12 +352,8 @@
 
 <div class="console">
   <div class="inner">
-    <span class="label">🦆 live&nbsp;query</span>
-    <pre id="sql">—</pre>
-    <div class="perf">
-      <span class="ms" id="ms">—</span>
-      <span class="rows" id="rows"></span>
-    </div>
+    <span class="label">🦆 live&nbsp;queries</span>
+    <div class="qlog" id="qlog"></div>
   </div>
 </div>
 
@@ -433,6 +425,18 @@ async function boot() {
   URL.revokeObjectURL(workerUrl);
   conn = await db.connect();
 
+  // Wrap the connection's one query method so every query anyone runs against
+  // it — boot-time setup, search, checkout's stock sync, recommendations —
+  // shows up in the console below, not just the ones a call site remembers
+  // to report manually.
+  const rawQuery = conn.query.bind(conn);
+  conn.query = async sql => {
+    const t0 = performance.now();
+    const res = await rawQuery(sql);
+    logQuery(sql, performance.now() - t0, res.numRows ?? 0);
+    return res;
+  };
+
   const resp = await fetch('./catalog.parquet');
   if (!resp.ok) throw new Error('catalog.parquet not found — serve this folder over HTTP');
   const buf = new Uint8Array(await resp.arrayBuffer());
@@ -493,6 +497,21 @@ function highlight(sql) {
              m => `<span class="kw">${m}</span>`);
 }
 
+// ---- live query log: every query DuckDB-WASM runs, see conn.query above ----
+const QLOG_MAX = 30;
+function logQuery(sql, ms, rows) {
+  const oneLine = sql.replace(/\s+/g, ' ').trim();
+  const row = document.createElement('div');
+  row.className = 'qrow';
+  row.innerHTML = `<pre title="${sql.replace(/"/g,'&quot;')}">${highlight(oneLine)}</pre>` +
+    `<span class="qms">⚡ ${ms.toFixed(2)} ms</span>` +
+    `<span class="qrows">${rows} row${rows === 1 ? '' : 's'}</span>`;
+  const log = $('qlog');
+  log.insertBefore(row, log.firstChild);
+  while (log.children.length > QLOG_MAX) log.removeChild(log.lastChild);
+  log.scrollTop = 0;
+}
+
 const num = v => typeof v === 'bigint' ? Number(v) : v;
 const stars = r => { const f = Math.round(r); return '<span class="star">'+'★'.repeat(f)+'</span>'+'☆'.repeat(5-f); };
 const quacker = amount => `<span class="quacker">Q</span>${amount}`;
@@ -503,13 +522,8 @@ const debounce = ms => { clearTimeout(timer); timer = setTimeout(run, ms); };
 async function run() {
   if (!conn) return;
   const sql = buildSQL();
-  $('sql').innerHTML = highlight(sql);
-  const t0 = performance.now();
   const res = await conn.query(sql);
-  const ms = performance.now() - t0;
   const rows = res.toArray().map(r => r.toJSON());
-  $('ms').textContent = `⚡ ${ms.toFixed(2)} ms`;
-  $('rows').textContent = `${rows.length} row${rows.length===1?'':'s'}`;
   $('count').innerHTML = `<b>${rows.length}</b> duck${rows.length===1?'':'s'}`;
 
   const grid = $('grid');
