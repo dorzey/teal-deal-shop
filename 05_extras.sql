@@ -33,22 +33,33 @@ SET hnsw_enable_experimental_persistence = true;
 -- `order_items`, so `UPDATE products SET embedding = ...` fails even though it
 -- never touches product_id. Keep the vectors in their own table instead.
 --
--- Toy 4-dim "embeddings" derived deterministically from category + price so
--- similar products cluster. Swap in real model embeddings for the real thing.
-CREATE OR REPLACE TABLE product_vectors AS
-SELECT product_id, [
-    CASE category WHEN 'bath' THEN 1.0 WHEN 'decor' THEN 0.0
-                  WHEN 'collectible' THEN 0.0 ELSE 0.5 END,
-    CASE category WHEN 'outdoor' THEN 1.0 ELSE 0.0 END,
-    (price_cents / 5000.0)::FLOAT,
-    ((product_id % 7) / 7.0)::FLOAT
-]::FLOAT[4] AS embedding
+-- Real (if simple) embeddings: a 16-dim hashed bag-of-words over name +
+-- description (name double-weighted), no external model needed — same
+-- formula public/index.html and collector.py use, so all three stay
+-- consistent. Products with overlapping words land near each other.
+CREATE OR REPLACE TABLE _tokens AS
+SELECT product_id, unnest(string_split(
+    regexp_replace(lower(name || ' ' || name || ' ' || description), '[^a-z0-9 ]', ' ', 'g'), ' '
+)) AS token
 FROM products;
+
+CREATE OR REPLACE TABLE _buckets AS
+SELECT product_id, (hash(token) % 16)::INTEGER AS bucket, count(*) AS n
+FROM _tokens WHERE token <> '' GROUP BY product_id, bucket;
+
+CREATE OR REPLACE TABLE product_vectors AS
+SELECT p.product_id, list(coalesce(b.n, 0)::FLOAT ORDER BY g.bucket)::FLOAT[16] AS embedding
+FROM products p CROSS JOIN generate_series(0, 15) g(bucket)
+LEFT JOIN _buckets b ON b.product_id = p.product_id AND b.bucket = g.bucket
+GROUP BY p.product_id;
+
+DROP TABLE _tokens;
+DROP TABLE _buckets;
 
 CREATE INDEX IF NOT EXISTS pv_hnsw ON product_vectors USING HNSW (embedding);
 
 -- Nearest neighbours to product 3 (excludes itself).
--- Tip: to actually exercise the HNSW index, pass a literal FLOAT[4] into
+-- Tip: to actually exercise the HNSW index, pass a literal FLOAT[16] into
 -- array_distance with ORDER BY ... LIMIT; a subquery vector falls back to exact.
 WITH q AS (SELECT embedding AS qe FROM product_vectors WHERE product_id = 3)
 SELECT v.product_id, p.name, p.category,

@@ -48,9 +48,10 @@ DUCKLAKE_DATA    = "lakehouse_data"
 # guarded by one lock. Connects lazily so importing this module (as the
 # collection-path tests do) never touches either file.
 _oltp_con, _db_lock = None, threading.Lock()
+_has_hybrid = False
 
 def _oltp():
-    global _oltp_con
+    global _oltp_con, _has_hybrid
     if _oltp_con is None:
         con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
         con.execute("INSTALL ducklake")
@@ -58,7 +59,60 @@ def _oltp():
             f"ATTACH 'ducklake:{DUCKLAKE_CATALOG}' AS lakehouse (DATA_PATH '{DUCKLAKE_DATA}/')"
         )
         _oltp_con = con
+        try:
+            _setup_hybrid(con)
+            _has_hybrid = True
+        except Exception as e:
+            print(f"[collector] hybrid recommendations unavailable: {e}", file=sys.stderr)
     return _oltp_con
+
+def _setup_hybrid(con):
+    """One-time build of the hybrid recommender's two signals: a real text
+    embedding (hashed bag-of-words over name+description — no external model,
+    same formula as public/index.html and 05_extras.sql) and a DuckPGQ
+    co-purchase graph. `duckpgq` is a community extension, so this is
+    best-effort — see the try/except in _oltp() — the same tolerance run.sh
+    already gives 05_extras.sql for the identical reason."""
+    con.execute("INSTALL vss")
+    con.execute("INSTALL duckpgq FROM community")
+    con.execute("LOAD vss")
+    con.execute("LOAD duckpgq")
+    con.execute("""
+        CREATE OR REPLACE TABLE _tokens AS
+        SELECT product_id, unnest(string_split(
+            regexp_replace(lower(name || ' ' || name || ' ' || description), '[^a-z0-9 ]', ' ', 'g'), ' '
+        )) AS token
+        FROM products
+    """)
+    con.execute("""
+        CREATE OR REPLACE TABLE _buckets AS
+        SELECT product_id, (hash(token) % 16)::INTEGER AS bucket, count(*) AS n
+        FROM _tokens WHERE token <> '' GROUP BY product_id, bucket
+    """)
+    con.execute("""
+        CREATE OR REPLACE TABLE product_vectors AS
+        SELECT p.product_id, list(coalesce(b.n, 0)::FLOAT ORDER BY g.bucket)::FLOAT[16] AS embedding
+        FROM products p CROSS JOIN generate_series(0, 15) g(bucket)
+        LEFT JOIN _buckets b ON b.product_id = p.product_id AND b.bucket = g.bucket
+        GROUP BY p.product_id
+    """)
+    con.execute("DROP TABLE _tokens")
+    con.execute("DROP TABLE _buckets")
+    con.execute("""
+        CREATE OR REPLACE TABLE hybrid_copurchase AS
+        SELECT a.product_id AS p1, b.product_id AS p2, count(*) AS weight
+        FROM order_items a JOIN order_items b ON a.order_id = b.order_id AND a.product_id <> b.product_id
+        GROUP BY 1, 2
+    """)
+    con.execute("""
+        CREATE OR REPLACE PROPERTY GRAPH hybrid_graph
+            VERTEX TABLES (products LABEL product)
+            EDGE TABLES (
+                hybrid_copurchase SOURCE KEY (p1) REFERENCES products (product_id)
+                                  DESTINATION KEY (p2) REFERENCES products (product_id)
+                                  LABEL bought_with
+            )
+    """)
 
 # ---- event buffering ---------------------------------------------------------
 _buf, _lock, _next_id = [], threading.Lock(), 1_000_000  # live ids start high
@@ -196,6 +250,49 @@ def get_recommendations(user_id, limit=6):
         """, [user_id, limit]).fetchall()
     return [r[0] for r in rows]
 
+def get_hybrid_recommendations(purchased_ids, limit=4):
+    """"Since you brought them home" — a real hybrid recommender: DuckPGQ
+    co-purchase graph traversal (who else bought these, tier 0) fused with
+    text-embedding similarity (tier 1 fallback, same tiered pattern as
+    get_recommendations() above). Runs server-side because DuckPGQ doesn't
+    load in DuckDB-WASM (confirmed) — unlike "Ducks like this", which stays
+    fully client-side. See _setup_hybrid()."""
+    if not _has_hybrid or not purchased_ids:
+        return []
+    con = _oltp()
+    ids = ",".join(str(int(i)) for i in purchased_ids)
+    limit = int(limit)
+    # NOTE: no `?` placeholders here, even for LIMIT — a query containing
+    # GRAPH_TABLE breaks DuckDB's parameter-count check even for an unrelated
+    # `?` elsewhere (confirmed: "Parameter argument/count mismatch"). ids and
+    # limit are both server-controlled ints (int()-cast above), not user text.
+    with _db_lock:
+        rows = con.execute(f"""
+            WITH graph_hits AS (
+                SELECT product_id, sum(weight) AS score, 0 AS tier
+                FROM (
+                    FROM GRAPH_TABLE (hybrid_graph
+                        MATCH (a:product)-[e:bought_with]->(b:product)
+                        WHERE a.product_id IN ({ids})
+                        COLUMNS (b.product_id AS product_id, e.weight AS weight)
+                    )
+                )
+                WHERE product_id NOT IN ({ids})
+                GROUP BY product_id
+            ),
+            similarity_hits AS (
+                SELECT v2.product_id, -min(array_distance(v1.embedding, v2.embedding)) AS score, 1 AS tier
+                FROM product_vectors v1, product_vectors v2
+                WHERE v1.product_id IN ({ids})
+                  AND v2.product_id NOT IN ({ids})
+                  AND v2.product_id NOT IN (SELECT product_id FROM graph_hits)
+                GROUP BY v2.product_id
+            ),
+            ranked AS (SELECT * FROM graph_hits UNION ALL SELECT * FROM similarity_hits)
+            SELECT product_id FROM ranked ORDER BY tier, score DESC, product_id LIMIT {limit}
+        """).fetchall()
+    return [r[0] for r in rows]
+
 def get_dashboard():
     """Live marts, computed on demand from oltp.duckdb + the DuckLake catalog —
     same shape as 04_marts.sql's funnel/retention/revenue, just expressed as
@@ -275,7 +372,8 @@ def get_dashboard():
         "totals": {"orders": totals[0], "revenue_eur": round(totals[1], 2)},
     }
 
-# ---- HTTP: static storefront + POST /collect + POST /order + GET /recommendations + GET /dashboard-data
+# ---- HTTP: static storefront + POST /collect + POST /order + GET /recommendations
+# + GET /hybrid-recommendations + GET /dashboard-data
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
@@ -288,6 +386,13 @@ class Handler(SimpleHTTPRequestHandler):
                 qs = parse_qs(urlparse(self.path).query)
                 user_id = int(qs.get("user_id", [""])[0])
                 self._json(200, {"product_ids": get_recommendations(user_id)})
+            except Exception as e:
+                self._json(400, {"error": str(e)})
+        elif path == "/hybrid-recommendations":
+            try:
+                qs = parse_qs(urlparse(self.path).query)
+                ids = [int(x) for x in qs.get("product_ids", [""])[0].split(",") if x]
+                self._json(200, {"product_ids": get_hybrid_recommendations(ids)})
             except Exception as e:
                 self._json(400, {"error": str(e)})
         elif path == "/dashboard-data":

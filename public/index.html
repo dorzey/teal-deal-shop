@@ -369,6 +369,7 @@ const CATEGORY_EMOJI = { bath:'🛁', decor:'🖼️', collectible:'🏆', outdo
 const state = { q:'', cats:new Set(), maxPrice:50, inStock:false, sort:'rating DESC' };
 let conn = null;
 let hasRecs = false;
+let hasFts = false;
 
 // ---- build category chips ----
 for (const c of CATEGORIES) {
@@ -443,24 +444,45 @@ async function boot() {
   await db.registerFileBuffer('catalog.parquet', buf);
   await conn.query(`CREATE TABLE catalog AS SELECT * FROM read_parquet('catalog.parquet')`);
 
+  // Real full-text search (BM25), same fts block as 05_extras.sql — confirmed
+  // INSTALL/LOAD fts and create_fts_index/match_bm25 all work in-browser too.
+  // Falls back to the old ILIKE substring match if it can't load.
+  try {
+    await conn.query(`INSTALL fts`);
+    await conn.query(`LOAD fts`);
+    await conn.query(`PRAGMA create_fts_index('catalog', 'product_id', 'name', 'description', overwrite = 1)`);
+    hasFts = true;
+  } catch (e) { console.warn('fts unavailable — falling back to ILIKE search', e); }
+
   // "Ducks like this": DuckDB-WASM can load the vss extension itself (confirmed —
   // INSTALL/LOAD vss and array_distance all work in-browser), so recommendations
-  // are computed live, right here, from the same toy embedding formula as the
-  // vss block in 05_extras.sql — no precompute or export step needed.
+  // are computed live, right here, from a real text embedding (hashed bag-of-words
+  // over name+description, same formula as 05_extras.sql / collector.py) — no
+  // precompute, export step, or external model needed.
   try {
     await conn.query(`INSTALL vss`);
     await conn.query(`LOAD vss`);
     await conn.query(`
-      CREATE TABLE product_vectors AS
-      SELECT product_id, [
-          CASE category WHEN 'bath' THEN 1.0 WHEN 'decor' THEN 0.0
-                        WHEN 'collectible' THEN 0.0 ELSE 0.5 END,
-          CASE category WHEN 'outdoor' THEN 1.0 ELSE 0.0 END,
-          (price_eur / 50.0)::FLOAT,
-          ((product_id % 7) / 7.0)::FLOAT
-      ]::FLOAT[4] AS embedding
+      CREATE TABLE _tokens AS
+      SELECT product_id, unnest(string_split(
+        regexp_replace(lower(name || ' ' || name || ' ' || description), '[^a-z0-9 ]', ' ', 'g'), ' '
+      )) AS token
       FROM catalog
     `);
+    await conn.query(`
+      CREATE TABLE _buckets AS
+      SELECT product_id, (hash(token) % 16)::INTEGER AS bucket, count(*) AS n
+      FROM _tokens WHERE token <> '' GROUP BY product_id, bucket
+    `);
+    await conn.query(`
+      CREATE TABLE product_vectors AS
+      SELECT c.product_id, list(coalesce(b.n, 0)::FLOAT ORDER BY g.bucket)::FLOAT[16] AS embedding
+      FROM catalog c CROSS JOIN generate_series(0, 15) g(bucket)
+      LEFT JOIN _buckets b ON b.product_id = c.product_id AND b.bucket = g.bucket
+      GROUP BY c.product_id
+    `);
+    await conn.query(`DROP TABLE _tokens`);
+    await conn.query(`DROP TABLE _buckets`);
     hasRecs = true;
   } catch (e) { console.warn('vss unavailable — recommendations disabled', e); }
 
@@ -475,7 +497,13 @@ function buildSQL() {
   const where = [];
   if (state.q.trim()) {
     const t = state.q.trim().replace(/'/g, "''");
-    where.push(`(name ILIKE '%${t}%' OR description ILIKE '%${t}%')`);
+    // BM25 gives real relevance for whole/stemmed words, but only matches
+    // tokens — it won't match "duc" while you're still typing "duck". Keep
+    // the ILIKE substring check alongside it so search-as-you-type doesn't
+    // flicker to zero results mid-word.
+    where.push(hasFts
+      ? `(fts_main_catalog.match_bm25(product_id, '${t}') IS NOT NULL OR name ILIKE '%${t}%' OR description ILIKE '%${t}%')`
+      : `(name ILIKE '%${t}%' OR description ILIKE '%${t}%')`);
   }
   if (state.cats.size) {
     where.push(`category IN (${[...state.cats].map(c => `'${c}'`).join(', ')})`);
@@ -623,19 +651,25 @@ function recGroup(title, rows) {
 async function showPostPurchaseRecs(purchasedIds) {
   const groups = [];
 
-  // 1. Item-based: "since you brought these home" — vss over what you just bought.
-  if (hasRecs && purchasedIds.length) {
-    const idList = purchasedIds.join(',');
-    const rows = (await conn.query(`
-      SELECT c.product_id, c.name, c.price_eur, min(array_distance(v1.embedding, v2.embedding)) AS dist
-      FROM product_vectors v1
-      JOIN product_vectors v2 ON v2.product_id NOT IN (${idList})
-      JOIN catalog c ON c.product_id = v2.product_id
-      WHERE v1.product_id IN (${idList})
-      GROUP BY c.product_id, c.name, c.price_eur
-      ORDER BY dist LIMIT 3
-    `)).toArray().map(r => r.toJSON());
-    if (rows.length) groups.push(recGroup('Since you brought them home:', rows));
+  // 1. Hybrid: DuckPGQ co-purchase graph (behavioral signal) fused with real
+  // text-embedding similarity (content signal), server-side — see
+  // collector.py's get_hybrid_recommendations(). DuckPGQ doesn't load in
+  // DuckDB-WASM (confirmed), so unlike "Ducks like this" this can't run
+  // purely client-side.
+  if (purchasedIds.length) {
+    try {
+      const res = await fetch(`/hybrid-recommendations?product_ids=${purchasedIds.join(',')}`);
+      if (res.ok) {
+        const { product_ids } = await res.json();
+        if (product_ids && product_ids.length) {
+          const idl = product_ids.join(',');
+          const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
+            .toArray().map(r => r.toJSON());
+          const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
+          if (ordered.length) groups.push(recGroup('Since you brought them home:', ordered));
+        }
+      }
+    } catch (e) { /* hybrid picks are optional */ }
   }
 
   // 2. Person-based: real collaborative filtering over YOUR order history in

@@ -17,7 +17,7 @@ collector.py       single-writer collector: storefront + events + real checkout 
 puddle_catalog.ducklake + lakehouse_data/   clickstream lake (DuckLake catalog, append-only truth)
 06_ducklake.sql    explores the live catalog                         (snapshots + time travel)
 marts.duckdb       downstream analytics: sessions, funnel, retention  (attaches oltp + the lake)
-public/index.html  DuckDB-WASM catalog search + real cart/checkout    (recs computed live via vss)
+public/index.html  DuckDB-WASM catalog search (BM25 fts) + real cart/checkout + live recs
 public/dashboard.html   funnel/revenue/retention, live from oltp.duckdb + the lake, no rebuild
 ```
 
@@ -40,14 +40,18 @@ safe — it stops whatever server a previous run left up before rebuilding, so
 you never get a "port already in use" error.
 
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
-`pip install duckdb` for `collector.py`. Also needs network: the DuckLake
-catalog (`03_lake.sql`) requires it on the first run to install the
+`pip install duckdb==1.5.4` for `collector.py` — pinned because the community
+`duckpgq` extension (used for hybrid recommendations, see below) lags behind
+`pip`'s latest DuckDB release; a newer pip version just means that one feature
+degrades gracefully rather than breaking the app. Also needs network: the
+DuckLake catalog (`03_lake.sql`) requires it on the first run to install the
 `ducklake` extension (cached after that) — that's a core dependency now, not
-an optional tier. `05_extras.sql` (fts/vss/spatial/DuckPGQ) and
-`06_ducklake.sql` (snapshot exploration) also run automatically as part of
-`./run.sh`, but **best-effort**: if their extensions can't be reached (e.g.
-the community `duckpgq` host is down), `run.sh` logs it and keeps going
-rather than failing the whole build over an optional demo tier.
+an optional tier. `05_extras.sql` (fts/vss/spatial/DuckPGQ), `06_ducklake.sql`
+(snapshot exploration), and `collector.py`'s own DuckPGQ setup all run
+**best-effort**: if their extensions can't be reached (e.g. the community
+`duckpgq` host is down, or its build hasn't caught up to your DuckDB version),
+each logs it and keeps going rather than failing the whole build/app over an
+optional demo tier.
 
 Want to re-run one piece by hand instead — e.g. after editing `05_extras.sql`
 — without rebuilding everything? Stop the collector first (only one process
@@ -112,16 +116,25 @@ purchase funnel, retention cohorts (a cross-database join of lake activity to
 OLTP signup + country), and a revenue rollup.
 
 **`05_extras.sql` — the fun tier, all just extensions.** BM25 full-text search
-(`fts`), HNSW vector similarity (`vss`), a co-purchase graph you traverse with a
-real `MATCH` (DuckPGQ), nearest-warehouse fulfilment (`spatial`), a live remote
-price-feed join (`httpfs`), and time-travel notes for DuckLake.
+(`fts`), HNSW vector similarity over real text embeddings (`vss`), a co-purchase
+graph you traverse with a real `MATCH` (DuckPGQ), nearest-warehouse fulfilment
+(`spatial`), a live remote price-feed join (`httpfs`), and time-travel notes for
+DuckLake.
 
 **`public/` — client-side catalog search (DuckDB-WASM).** Ships the catalog as
 Parquet and runs DuckDB *in the browser*: every keystroke, facet, and sort is a
-real SQL query with zero round-trips. The console strip at the bottom shows the
-generated SQL and its sub-millisecond execution time — the whole thesis, made
-visible. Reads and personalization can live in the browser; **truth stays on the
-server** (anything on the write path — checkout, inventory — is the OLTP tier).
+real SQL query with zero round-trips, blending BM25 (`fts`) with an `ILIKE`
+fallback so mid-word typing never flickers to zero results. "Ducks like this"
+is a real text embedding (`vss`), computed live in-browser too. The console
+strip at the bottom shows the generated SQL and its sub-millisecond execution
+time — the whole thesis, made visible. Reads and personalization can live in
+the browser; **truth stays on the server** (anything on the write path —
+checkout, inventory — is the OLTP tier). One exception: "since you brought
+them home" fuses that same text embedding with a DuckPGQ co-purchase graph
+traversal, and DuckPGQ doesn't load in DuckDB-WASM (confirmed) — so that one
+recommendation is a real round-trip to `collector.py` (`get_hybrid_recommendations()`),
+the same tiered real-signal-first/fallback pattern `get_recommendations()`
+already uses for "shoppers like you also got".
 
 ## Notes on the synthetic data
 
@@ -133,9 +146,12 @@ actually decays instead of sitting flat.
 
 ## Upgrade paths
 
-- Swap the browser's `ILIKE` search for `fts` loaded in WASM (BM25 in-browser).
+- ~~Swap the browser's `ILIKE` search for `fts` loaded in WASM (BM25 in-browser).~~
+  Done — see the `public/` tier above.
+- ~~Replace the toy `vss` vectors with real embeddings for semantic recommendations,
+  then fuse them with the DuckPGQ co-purchase graph for a hybrid recommender.~~
+  Done — a dependency-free hashed bag-of-words text embedding (no external model),
+  fused server-side with a DuckPGQ co-purchase graph. See the `public/` tier above.
 - Back the DuckLake catalog with Postgres instead of a local file, for real
   concurrent multi-process reads/writes (today, only one process can have it
   attached at a time — see the DuckLake tradeoff above).
-- Replace the toy `vss` vectors with real embeddings for semantic recommendations,
-  then fuse them with the DuckPGQ co-purchase graph for a hybrid recommender.
