@@ -18,7 +18,9 @@ INSTALL ducklake;
 ATTACH IF NOT EXISTS 'oltp.duckdb' AS oltp (READ_ONLY);
 ATTACH IF NOT EXISTS 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
 
--- Convenience view over the DuckLake clickstream catalog.
+-- Convenience view over the DuckLake clickstream catalog. 07_stress.py's
+-- concurrent-writer demo writes real event_types straight into this same
+-- table on purpose, deliberately included here too — see its docstring.
 CREATE OR REPLACE VIEW lake_events AS
 SELECT * FROM lakehouse.events;
 

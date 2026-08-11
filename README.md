@@ -16,6 +16,7 @@ tracker.js         browser tracker: fires pageview/add_to_cart events
 collector.py       single-writer collector: storefront + events + real checkout + live stats
 puddle_catalog.ducklake + lakehouse_data/   clickstream lake (DuckLake catalog, append-only truth)
 06_ducklake.sql    explores the live catalog                         (snapshots + time travel)
+07_stress.py       concurrent-writer stress test over quack           (multiple writers, live)
 marts.duckdb       downstream analytics: sessions, funnel, retention  (attaches oltp + the lake)
 public/index.html  DuckDB-WASM catalog search (BM25 fts) + real cart/checkout + live recs
 public/dashboard.html   funnel/revenue/retention, live from oltp.duckdb + the lake, no rebuild
@@ -138,6 +139,36 @@ Needs `duckdb-wasm@1.33.1-dev57.0` specifically, not the storefront's
 pinned `1.29.0` — confirmed that 1.29.0 can `INSTALL`/`LOAD` quack (its
 functions work) but doesn't yet have quack's `ATTACH`/storage support
 ("Unrecognized storage type").
+
+**Concurrent writers (`07_stress.py`).** DuckDB's own Quack announcement
+claims "multiple concurrent writers" — this actually exercises that instead
+of taking it on faith. N threads, each with its own quack connection,
+`INSERT` into the live DuckLake catalog at once:
+
+```bash
+python3 07_stress.py --workers 8 --duration 10
+```
+
+Writes use real `event_type`s (weighted like real traffic — mostly
+pageviews) and land in the exact same table `dashboard.html` reads, on
+purpose: the point is watching the actual sessions/funnel/retention/daily
+numbers move live while this runs, not a bespoke counter in a universe of
+its own. First version used a separate `'stress_write'` type excluded from
+every real query — technically clean, but pointless, since a reader
+couldn't see the writes land anywhere. Real types it is; a stress run
+visibly nudges the funnel and adds a genuine retention/daily-activity
+spike for "today" (`weeks_since` jumps way out, since the seed data is
+dated ~March 2025 and the stress run's timestamps are real "now") — that's
+honest, not corruption, since it's exactly what a real traffic burst
+against this seed data would do too. Each row is still tagged `props:
+{"stress": true}` so the dashboard's own live "⚡ N writes · N/s" banner
+(a separate, faster-polling query, filtering on that tag) can count them
+distinctly from organic traffic. Also surfaced a real DuckLake behavior
+worth knowing: under enough concurrent write pressure, a transaction can
+exhaust its retry budget and fail outright (`Exceeded the maximum retry
+count... Conflict on update!`) — optimistic concurrency, not a queue, so
+contention shows up as retried-then-failed writes rather than serialized
+waiting.
 
 **DuckLake (`06_ducklake.sql`).** Since the lake *is* the catalog now, this
 script no longer ingests anything — it just explores what's already there:

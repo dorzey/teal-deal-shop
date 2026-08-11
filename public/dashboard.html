@@ -73,6 +73,17 @@
   .tile.pulse{animation:tilePulse 1s ease}
   @keyframes tilePulse{0%{background:#FFF6DC;border-color:var(--accent)}100%{background:var(--surface);border-color:var(--line)}}
 
+  /* live write-throughput banner — see 07_stress.py + pollStressWrites() */
+  .stress-bar{
+    display:none;align-items:center;gap:10px;
+    background:var(--surface);border:1px solid var(--teal);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:10px 16px;margin-top:14px;
+    font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--ink);
+  }
+  .stress-bar.show{display:flex}
+  .stress-bar .bolt{color:var(--teal);animation:pulse 1s infinite}
+  .stress-bar b{font-family:'Inter',sans-serif;font-weight:600}
+
   /* chart cards */
   .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media (max-width:860px){.cards{grid-template-columns:1fr}}
@@ -122,6 +133,11 @@
     </div>
     <div class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling the numbers together…</span></div>
   </header>
+
+  <div id="stressBar" class="stress-bar">
+    <span class="bolt">⚡</span>
+    <span>Concurrent-writer stress test (<code>07_stress.py</code>): <b id="stressCount">0</b> writes<span id="stressRate"></span></span>
+  </div>
 
   <div id="content"></div>
 </div>
@@ -183,6 +199,10 @@ const rowsOf = res => res.toArray().map(r => {
   return o;
 });
 
+// 07_stress.py's concurrent-writer demo writes real event_types straight
+// into this same table, deliberately included in every query below — see
+// its docstring for why (short version: so the stress test visibly moves
+// these numbers instead of writing into a universe nobody can see).
 async function queryLakeStats() {
   const [funnel] = rowsOf(await quackConn.query(`
     WITH gaps AS (
@@ -228,6 +248,34 @@ async function queryLakeStats() {
   `));
 
   return { funnel, retention, daily };
+}
+
+// ---- live write-throughput counter for the concurrent-writer stress test
+// (see 07_stress.py) — same quack connection as queryLakeStats(), but its
+// own faster poll loop so the count visibly climbs while a stress test is
+// running instead of waiting on the main 4s dashboard cycle. 07_stress.py's
+// rows use real event_types (they count in queryLakeStats() above too, on
+// purpose) but are still tagged `props: {"stress": true}`, so this counts
+// them specifically via that tag rather than event_type.
+let lastStressCount = null, lastStressAt = null;
+const STRESS_POLL_MS = 1000;
+
+async function pollStressWrites() {
+  if (!hasQuack) return;
+  try {
+    const [row] = rowsOf(await quackConn.query(
+      `SELECT count(*) AS n FROM remote.events WHERE props->>'$.stress' = 'true'`
+    ));
+    const now = Date.now();
+    if (lastStressCount !== null && row.n > lastStressCount) {
+      const rate = (row.n - lastStressCount) / ((now - lastStressAt) / 1000);
+      $('stressRate').textContent = ` · ${rate.toFixed(0)}/s`;
+      $('stressBar').classList.add('show');
+    }
+    $('stressCount').textContent = row.n.toLocaleString('en');
+    lastStressCount = row.n;
+    lastStressAt = now;
+  } catch (e) { /* transient — next tick retries */ }
 }
 
 function niceTicks(max) {
@@ -483,6 +531,7 @@ bootQuack();  // fire-and-forget — WASM takes a few seconds to instantiate; /d
               // already renders immediately, later ticks pick up the live path once ready
 load(false);
 startPolling();
+setInterval(pollStressWrites, STRESS_POLL_MS);
 </script>
 </body>
 </html>
