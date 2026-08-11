@@ -136,6 +136,100 @@ const num = v => typeof v === 'bigint' ? Number(v) : v;
 const fmtCompact = n => n.toLocaleString('en', { notation: 'compact', maximumFractionDigits: 1 });
 const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// ---- funnel/retention/daily, live via Quack (DuckDB-WASM attaches straight to
+// collector.py's DuckLake connection over HTTP, no /dashboard-data round-trip)
+// -------------------------------------------------------------------------------
+// revenue_by_category/totals stay on /dashboard-data below: they need
+// oltp.duckdb, and confirmed that a beta bug in this quack release makes any
+// FOREIGN-KEY table (i.e. every real table oltp.duckdb has) invisible to
+// remote clients. The lake's `events` table has no FK, so it works. Dynamic
+// import() (not a <script type="module">) so this doesn't change how the
+// rest of this classic script executes. No fallback: if this fails, the
+// funnel/retention/daily cards just show a waiting/empty state rather than
+// silently serving stale-shaped data from /dashboard-data (which no longer
+// computes them at all — see collector.py's get_dashboard()).
+//
+// Pinned newer than index.html's duckdb-wasm@1.29.0 — confirmed empirically
+// that 1.29.0 can INSTALL/LOAD the quack extension (its functions work) but
+// doesn't have quack's ATTACH/storage support yet ("Unrecognized storage
+// type"). This exact dev build does. Pinned rather than @latest so this
+// doesn't silently break if a newer build changes something.
+let hasQuack = false, quackConn = null;
+
+async function bootQuack() {
+  try {
+    const duckdb = await import('https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm');
+    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    const workerUrl = URL.createObjectURL(
+      new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+    );
+    const worker = new Worker(workerUrl);
+    const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    URL.revokeObjectURL(workerUrl);
+    quackConn = await db.connect();
+    await quackConn.query(`INSTALL quack`);
+    await quackConn.query(`LOAD quack`);
+    await quackConn.query(`ATTACH 'quack:localhost:8789' AS remote (TOKEN 'puddle-demo-token')`);
+    hasQuack = true;
+  } catch (e) {
+    console.warn('quack unavailable — funnel/retention/daily will stay in their waiting state', e);
+  }
+}
+
+const rowsOf = res => res.toArray().map(r => {
+  const o = r.toJSON();
+  for (const k in o) o[k] = num(o[k]);
+  return o;
+});
+
+async function queryLakeStats() {
+  const [funnel] = rowsOf(await quackConn.query(`
+    WITH gaps AS (
+      SELECT user_id, event_ts, event_type,
+             event_ts - LAG(event_ts) OVER (PARTITION BY user_id ORDER BY event_ts) AS gap
+      FROM remote.events
+    ), session_events AS (
+      SELECT *, SUM(CASE WHEN gap IS NULL OR gap > INTERVAL 30 MINUTE THEN 1 ELSE 0 END)
+                OVER (PARTITION BY user_id ORDER BY event_ts) AS session_num
+      FROM gaps
+    ), sessions AS (
+      SELECT bool_or(event_type = 'add_to_cart') AS reached_cart,
+             bool_or(event_type = 'purchase')    AS reached_purchase
+      FROM session_events GROUP BY user_id, session_num
+    )
+    SELECT count(*) AS sessions,
+           count(*) FILTER (WHERE reached_cart) AS carted,
+           count(*) FILTER (WHERE reached_purchase) AS purchased,
+           round(100.0 * count(*) FILTER (WHERE reached_cart) / count(*), 1) AS view_to_cart_pct,
+           round(100.0 * count(*) FILTER (WHERE reached_purchase)
+                 / nullif(count(*) FILTER (WHERE reached_cart), 0), 1) AS cart_to_purchase_pct
+    FROM sessions
+  `));
+
+  const retention = rowsOf(await quackConn.query(`
+    WITH activity AS (
+      SELECT DISTINCT user_id, date_trunc('week', event_ts) AS active_week FROM remote.events
+    ), cohort AS (
+      SELECT user_id, min(active_week) AS cohort_week FROM activity GROUP BY user_id
+    )
+    SELECT CAST(date_diff('week', c.cohort_week, a.active_week) AS INTEGER) AS weeks_since,
+           count(DISTINCT c.user_id) AS active_users
+    FROM cohort c JOIN activity a USING (user_id)
+    GROUP BY 1 ORDER BY 1
+  `));
+
+  const daily = rowsOf(await quackConn.query(`
+    SELECT event_date::VARCHAR AS date,
+           count(*) FILTER (WHERE event_type = 'pageview')    AS pageviews,
+           count(*) FILTER (WHERE event_type = 'add_to_cart') AS carts,
+           count(*) FILTER (WHERE event_type = 'purchase')    AS purchases
+    FROM remote.events GROUP BY event_date ORDER BY event_date
+  `));
+
+  return { funnel, retention, daily };
+}
+
 function niceTicks(max) {
   if (max <= 0) return [0];
   const rough = max / 4;
@@ -252,16 +346,23 @@ function revenueChart(rows) {
 }
 
 // ---- assemble the page --------------------------------------------------------
+// d.funnel/retention/daily are `null` until the live Quack connection answers
+// its first query — no /dashboard-data fallback for these three, see
+// queryLakeStats(). `waiting` renders a placeholder instead of a chart; once
+// non-null they're real (possibly empty) results, same as before.
+const waiting = `<div class="empty">Waiting for the live Quack connection…</div>`;
 let prevData = null;
 
 function render(d) {
-  const conv = d.funnel.sessions ? (100 * num(d.funnel.purchased) / num(d.funnel.sessions)).toFixed(1) : '0.0';
+  const conv = d.funnel && d.funnel.sessions
+    ? (100 * num(d.funnel.purchased) / num(d.funnel.sessions)).toFixed(1) : null;
   const p = prevData;
   const changed = {
     revenue: p && num(p.totals.revenue_eur) !== num(d.totals.revenue_eur),
     orders: p && num(p.totals.orders) !== num(d.totals.orders),
-    sessions: p && num(p.funnel.sessions) !== num(d.funnel.sessions),
-    conv: p && p.funnel.sessions && (100 * num(p.funnel.purchased) / num(p.funnel.sessions)).toFixed(1) !== conv,
+    sessions: p && p.funnel && d.funnel && num(p.funnel.sessions) !== num(d.funnel.sessions),
+    conv: p && p.funnel && p.funnel.sessions && d.funnel &&
+      (100 * num(p.funnel.purchased) / num(p.funnel.sessions)).toFixed(1) !== conv,
     funnelChart: p && JSON.stringify(p.funnel) !== JSON.stringify(d.funnel),
     revenueChart: p && JSON.stringify(p.revenue_by_category) !== JSON.stringify(d.revenue_by_category),
     retentionChart: p && JSON.stringify(p.retention) !== JSON.stringify(d.retention),
@@ -271,15 +372,15 @@ function render(d) {
     <div class="tiles">
       <div class="tile${changed.revenue ? ' pulse' : ''}"><div class="label">Total revenue (confirmed + shipped)</div><div class="value">${fmtQ(num(d.totals.revenue_eur))}</div></div>
       <div class="tile${changed.orders ? ' pulse' : ''}"><div class="label">Orders taken home</div><div class="value">${num(d.totals.orders).toLocaleString('en')}</div></div>
-      <div class="tile${changed.sessions ? ' pulse' : ''}"><div class="label">Sessions</div><div class="value">${num(d.funnel.sessions).toLocaleString('en')}</div></div>
-      <div class="tile${changed.conv ? ' pulse' : ''}"><div class="label">Session &rarr; purchase</div><div class="value">${conv}%</div></div>
+      <div class="tile${changed.sessions ? ' pulse' : ''}"><div class="label">Sessions</div><div class="value">${d.funnel ? num(d.funnel.sessions).toLocaleString('en') : '…'}</div></div>
+      <div class="tile${changed.conv ? ' pulse' : ''}"><div class="label">Session &rarr; purchase</div><div class="value">${conv === null ? '…' : conv + '%'}</div></div>
     </div>
 
     <div class="cards">
       <div class="card${changed.funnelChart ? ' pulse' : ''}">
         <h2>🦆 Conversion funnel</h2>
-        <div class="sub">Sessions that added to their flock, and of those, who took them home.</div>
-        ${funnelChart(d.funnel)}
+        <div class="sub">Sessions that added to their flock, and of those, who took them home. Live via Quack.</div>
+        ${d.funnel ? funnelChart(d.funnel) : waiting}
       </div>
       <div class="card${changed.revenueChart ? ' pulse' : ''}">
         <h2>💰 Revenue by category</h2>
@@ -288,23 +389,23 @@ function render(d) {
       </div>
       <div class="card wide${changed.retentionChart ? ' pulse' : ''}">
         <h2>🌊 Retention</h2>
-        <div class="sub">Active users by weeks since their first visit — the pond drains, as ponds do.</div>
-        ${d.retention.length ? lineChart({
+        <div class="sub">Active users by weeks since their first visit — the pond drains, as ponds do. Live via Quack.</div>
+        ${d.retention === null ? waiting : (d.retention.length ? lineChart({
           data: d.retention.map(r => ({ x: num(r.weeks_since), value: num(r.active_users) })),
           series: [{ key: 'value', label: 'Active users', color: 'var(--teal)' }],
-        }) : `<div class="empty">No retention data yet.</div>`}
+        }) : `<div class="empty">No retention data yet.</div>`)}
       </div>
       <div class="card wide${changed.dailyChart ? ' pulse' : ''}">
         <h2>📈 Daily activity</h2>
-        <div class="sub">Pageviews, add-to-flocks, and completed orders per day across the lake.</div>
-        ${d.daily.length ? lineChart({
+        <div class="sub">Pageviews, add-to-flocks, and completed orders per day across the lake. Live via Quack.</div>
+        ${d.daily === null ? waiting : (d.daily.length ? lineChart({
           data: d.daily.map(r => ({ x: r.date.slice(5), pageviews: num(r.pageviews), carts: num(r.carts), purchases: num(r.purchases) })),
           series: [
             { key: 'pageviews', label: 'Pageviews', color: 'var(--cat-bath)' },
             { key: 'carts', label: 'Add to flock', color: 'var(--cat-outdoor)' },
             { key: 'purchases', label: 'Taken home', color: 'var(--cat-decor)' },
           ],
-        }) : `<div class="empty">No events yet.</div>`}
+        }) : `<div class="empty">No events yet.</div>`)}
       </div>
     </div>
   `;
@@ -313,6 +414,12 @@ function render(d) {
 
 const POLL_MS = 4000;
 let pollTimer = null, hasLoadedOnce = false;
+
+// funnel/retention/daily live here, independent of /dashboard-data's poll
+// cycle — null until the first successful live query, then retained across
+// any later failed tick (same "don't blank out over one bad tick" logic
+// load() already applies to the rest of the page).
+let lakeStats = { funnel: null, retention: null, daily: null };
 
 async function load(isManual) {
   const btn = $('refreshBtn');
@@ -325,10 +432,21 @@ async function load(isManual) {
     const res = await fetch('/dashboard-data');
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    render(data);
+
+    if (hasQuack) {
+      try {
+        lakeStats = await queryLakeStats();
+      } catch (e) {
+        console.warn('live quack query failed this tick — keeping last known values', e);
+      }
+    }
+
+    render({ ...data, ...lakeStats });
     hasLoadedOnce = true;
     $('dot').className = 'dot ready';
-    $('statusText').textContent = `🔴 live · every ${POLL_MS / 1000}s · last update ${new Date().toLocaleTimeString()}`;
+    $('statusText').textContent = `🔴 live · every ${POLL_MS / 1000}s` +
+      (hasQuack ? ' · funnel/retention/daily via Quack, client-side' : ' · waiting for Quack connection…') +
+      ` · last update ${new Date().toLocaleTimeString()}`;
   } catch (err) {
     if (!hasLoadedOnce) {
       $('dot').className = 'dot';
@@ -361,6 +479,8 @@ document.addEventListener('visibilitychange', () => {
 });
 
 $('refreshBtn').addEventListener('click', e => { e.preventDefault(); load(true); });
+bootQuack();  // fire-and-forget — WASM takes a few seconds to instantiate; /dashboard-data
+              // already renders immediately, later ticks pick up the live path once ready
 load(false);
 startPolling();
 </script>

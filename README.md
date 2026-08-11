@@ -87,11 +87,10 @@ three real snapshots to explore right away; the **live path** is `tracker.js`
 keeps a durable anonymous `visitor_id` and a 30-minute `session_id`, fires a
 pageview on load, and sends an `add_to_cart` event when you click a card —
 using `navigator.sendBeacon` so events survive page unloads. `collector.py` is
-the receiving end and, like the OLTP tier, is a **single writer**: one shared
-connection holding both `oltp.duckdb` *and* the DuckLake catalog attached
-(orders, recommendations, the dashboard, and event flushes all funnel through
-it — a local-file DuckLake catalog is itself just a DuckDB file, so only one
-connection anywhere can have it attached). It serves the storefront (so
+the receiving end and, like the OLTP tier, is a **single writer** — two of
+them now, actually: one connection for `oltp.duckdb` (orders, recommendations,
+the dashboard's revenue) and a separate one for the DuckLake catalog (event
+flushes, the dashboard's funnel/retention). It serves the storefront (so
 events post same-origin), batches events, and `INSERT`s each batch straight
 into the DuckLake catalog in the *same schema the marts read* — live clicks
 flow into the funnel and retention next time you build the marts. A
@@ -99,15 +98,59 @@ background thread calls `ducklake_merge_adjacent_files` every 60s so the
 small-file fragmentation that batching used to hand-roll around is handled by
 DuckLake's own documented maintenance operation instead.
 
+The DuckLake connection also calls `quack_serve()` — DuckDB's own HTTP
+client-server protocol, core since v1.5.3 — so a second process can `ATTACH
+'quack:localhost:8789' AS remote (TOKEN 'puddle-demo-token')` and read/write
+events live, *while the collector is running*, instead of needing the file
+directly:
+
+```bash
+duckdb -c "
+  INSTALL quack; LOAD quack;
+  ATTACH 'quack:localhost:8789' AS remote (TOKEN 'puddle-demo-token');
+  SELECT event_type, count(*) FROM remote.events GROUP BY event_type;
+"
+```
+
+`oltp.duckdb` deliberately does **not** get the same treatment: confirmed
+empirically that this beta release of quack makes any table with a `FOREIGN
+KEY` invisible to remote clients (`PRIMARY KEY` and `CHECK` are fine,
+`REFERENCES` is not) — and every real table in `oltp.duckdb` has one, since
+real constraints are the entire point of that tier. Dropping them to work
+around a beta bug in an external tool isn't a trade worth making, so
+`oltp.duckdb`'s single-writer limitation is unchanged: still one process,
+still funnel every write through it.
+
+`public/dashboard.html` is the second client, and the more interesting one:
+its funnel/retention/daily-activity charts are computed by DuckDB-WASM
+running *in the browser*, attached straight to `collector.py`'s live
+DuckLake connection over quack — same thesis as the storefront's in-browser
+search, now against a live server instead of a static Parquet export. These
+three are **quack-only, no `/dashboard-data` fallback**: `get_dashboard()`
+doesn't compute them server-side at all anymore, only `revenue_by_category`/
+`totals` (they need `oltp.duckdb`, which isn't quack-reachable, see above).
+Until the in-browser connection finishes instantiating (a few seconds), or
+if a live query ever fails, those three cards show a plain "waiting for the
+live Quack connection…" placeholder rather than silently serving stale or
+re-fetched JSON — the status line says "funnel/retention/daily via Quack,
+client-side" once it's up, "waiting for Quack connection…" before that.
+Needs `duckdb-wasm@1.33.1-dev57.0` specifically, not the storefront's
+pinned `1.29.0` — confirmed that 1.29.0 can `INSTALL`/`LOAD` quack (its
+functions work) but doesn't yet have quack's `ATTACH`/storage support
+("Unrecognized storage type").
+
 **DuckLake (`06_ducklake.sql`).** Since the lake *is* the catalog now, this
 script no longer ingests anything — it just explores what's already there:
 `ducklake_snapshots`, `AT (VERSION => n)` / `AT (TIMESTAMP => …)` time travel,
 and a change feed via `ducklake_table_changes`, replaying the funnel as of an
-earlier snapshot. Trade-off worth knowing: this only works because everything
-shares one local-file catalog — a second process (this script, an ad-hoc
-query, `collector.py`) can't attach concurrently while another holds it open,
-same limitation as `oltp.duckdb`. Real concurrent multi-process access would
-need Postgres (or similar) as the catalog backend instead of a local file.
+earlier snapshot. This one still needs the file directly (stop `collector.py`
+first) — confirmed empirically that DuckLake's time-travel/snapshot functions
+don't work through a quack attachment yet, even though plain reads/writes do
+(see above). That's real, on the DuckDB team's own roadmap (they've said
+DuckLake-as-a-quack-catalog-server is coming), not a Puddle-specific gap.
+Real concurrent multi-process access to `oltp.duckdb`, or to time-travel
+queries against the lake, still needs either that upstream fix or Postgres
+(or similar) as the catalog backend instead of a local file.
 
 **`04_marts.sql` — downstream analytics (home turf).** `ATTACH`es the OLTP store
 read-only and reads the lake in the same queries. Sessionization via window
@@ -153,5 +196,16 @@ actually decays instead of sitting flat.
   Done — a dependency-free hashed bag-of-words text embedding (no external model),
   fused server-side with a DuckPGQ co-purchase graph. See the `public/` tier above.
 - Back the DuckLake catalog with Postgres instead of a local file, for real
-  concurrent multi-process reads/writes (today, only one process can have it
-  attached at a time — see the DuckLake tradeoff above).
+  concurrent multi-process reads/writes. **Partly done** — investigated
+  Quack (DuckDB's own HTTP client-server protocol, core since v1.5.3)
+  instead of reaching for Postgres, and it genuinely works for the
+  DuckLake catalog: `collector.py` now serves it live, and a second
+  process can read/write events without stopping the collector (see
+  "Event tracking" above). It does *not* solve `oltp.duckdb`, though —
+  confirmed a beta bug where any table with a `FOREIGN KEY` is invisible
+  to quack clients, which is every real table there — nor DuckLake time
+  travel, which doesn't work through quack yet at all (upstream roadmap
+  item). Postgres remains the answer for those two until quack matures.
+  `public/dashboard.html` is the concrete payoff: its funnel/retention/daily
+  charts now run as real SQL in DuckDB-WASM, attached live over quack,
+  instead of a `/dashboard-data` round-trip — see the `public/` tier above.

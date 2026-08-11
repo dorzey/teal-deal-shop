@@ -2,9 +2,16 @@
 """
 collector.py — Puddle's single-writer event collector.
 
-One process, one DuckDB connection to oltp.duckdb (with the DuckLake catalog
-attached alongside it — see _oltp()): the same "single writer" discipline the
-OLTP tier uses, now for the clickstream too. It:
+Two single-writer DuckDB connections, one for oltp.duckdb and one for the
+DuckLake catalog (see _oltp()/_lake()) — same "single writer" discipline the
+OLTP tier always used, now for the clickstream too. The DuckLake connection
+is also served over Quack (DuckDB's own HTTP client-server protocol, core
+since v1.5.3): another process can ATTACH to it over the network and read/
+write events while this one is running, instead of needing the file
+directly. oltp.duckdb isn't quack-served — a confirmed bug in this beta
+release makes any table with a FOREIGN KEY invisible to remote clients, and
+that's every real table oltp.duckdb has, so its single-writer limitation is
+unchanged (see the comment above _oltp()/_lake() for the full story). It:
 
   • serves the storefront from ./public  (so the tracker posts same-origin)
   • accepts POST /collect events and appends them to the DuckLake catalog,
@@ -37,27 +44,49 @@ COMPACT_SECS = 60.0         # how often to merge small lake files in the backgro
 # so this can't be ROOT-absolute like oltp.duckdb's path below. Consistent with
 # those scripts, and this file's own docstring: run collector.py from the repo root.
 DUCKLAKE_CATALOG = "puddle_catalog.ducklake"
-DUCKLAKE_DATA    = "lakehouse_data"
+# DuckLake's own database name once opened directly (not ATTACHed under an
+# alias) is the file stem — confirmed empirically. Needed by name for
+# ducklake_merge_adjacent_files() below.
+DUCKLAKE_DB      = os.path.splitext(DUCKLAKE_CATALOG)[0]
 
-# ---- the single writer: both oltp.duckdb AND the DuckLake catalog ----------
-# A local-file DuckLake catalog is itself just a DuckDB file, so — like
-# oltp.duckdb — only one connection anywhere can have it attached at a time;
-# a second attach attempt (even from a second connection in this SAME
-# process) fails with a lock/handle conflict. So there's exactly one shared
-# connection for orders, recommendations, the dashboard, AND event writes,
-# guarded by one lock. Connects lazily so importing this module (as the
-# collection-path tests do) never touches either file.
-_oltp_con, _db_lock = None, threading.Lock()
+# Plain fixed token — this is a localhost-only demo (quack_serve defaults
+# allow_other_hostname to false), no different from oltp.duckdb having no
+# auth today. A real deployment would generate + guard this properly.
+QUACK_TOKEN    = "puddle-demo-token"
+QUACK_LAKE_PORT = 8789
+
+# ---- the single writer, twice over: oltp.duckdb and the DuckLake catalog ---
+# Each file still only allows one connection to hold it — DuckDB's
+# single-writer model is unchanged. The DuckLake connection additionally
+# calls quack_serve() (DuckDB's own HTTP client-server protocol, core since
+# v1.5.3): a SECOND process can ATTACH to it over the network and read/write
+# events while this process is running, instead of needing the file
+# directly. oltp.duckdb deliberately does NOT get the same treatment —
+# confirmed empirically that this beta release of quack makes any table
+# with a FOREIGN KEY invisible to remote clients (PRIMARY KEY and CHECK are
+# fine; REFERENCES is not), and every real table in oltp.duckdb has one.
+# That's the entire point of the OLTP tier, so working around it by
+# dropping the constraints isn't on the table — oltp.duckdb's single-writer
+# limitation stands as-is until quack's bug is fixed upstream (see README).
+# Also confirmed: DuckLake time travel (`AT (VERSION => n)`,
+# ducklake_snapshots) does NOT work through a quack attachment at all yet —
+# real, on the DuckDB team's own roadmap, not a Puddle-specific limitation
+# — so 06_ducklake.sql still needs the file directly regardless.
+#
+# oltp and the lake are two separate connections (rather than one, with the
+# lake ATTACHed alongside oltp like before) because a quack server only
+# exposes its own PRIMARY database to clients, confirmed empirically — and
+# the lake connection needs to be primary for quack_serve() to expose it at
+# all. Both connect lazily so importing this module (as the collection-path
+# tests do) never touches either file.
+_oltp_con, _oltp_lock = None, threading.Lock()
+_lake_con, _lake_lock = None, threading.Lock()
 _has_hybrid = False
 
 def _oltp():
     global _oltp_con, _has_hybrid
     if _oltp_con is None:
         con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
-        con.execute("INSTALL ducklake")
-        con.execute(
-            f"ATTACH 'ducklake:{DUCKLAKE_CATALOG}' AS lakehouse (DATA_PATH '{DUCKLAKE_DATA}/')"
-        )
         _oltp_con = con
         try:
             _setup_hybrid(con)
@@ -65,6 +94,30 @@ def _oltp():
         except Exception as e:
             print(f"[collector] hybrid recommendations unavailable: {e}", file=sys.stderr)
     return _oltp_con
+
+def _lake():
+    """Opens the DuckLake catalog directly as this connection's own primary
+    database — not ATTACHed alongside oltp.duckdb like before — and serves
+    it over quack (see the module-level note above). Best-effort: quack is
+    core in DuckDB v1.5.3+, but an older DuckDB just means no remote access
+    to the lake, not a crash — same tolerance as the hybrid recommender's
+    duckpgq dependency."""
+    global _lake_con
+    if _lake_con is None:
+        con = duckdb.connect(f"ducklake:{DUCKLAKE_CATALOG}")
+        try:
+            con.execute("INSTALL quack")
+            con.execute("LOAD quack")
+            con.execute(
+                f"SELECT * FROM quack_serve('quack://localhost:{QUACK_LAKE_PORT}', "
+                f"token := '{QUACK_TOKEN}', disable_ssl := true)"
+            )
+            print(f"[collector] the DuckLake catalog reachable via "
+                  f"quack:localhost:{QUACK_LAKE_PORT} (token {QUACK_TOKEN})", flush=True)
+        except Exception as e:
+            print(f"[collector] quack unavailable for the DuckLake catalog: {e}", file=sys.stderr)
+        _lake_con = con
+    return _lake_con
 
 def _setup_hybrid(con):
     """One-time build of the hybrid recommender's two signals: a real text
@@ -152,9 +205,9 @@ def flush():
         if not _buf:
             return
         rows, _buf[:] = list(_buf), []
-    con = _oltp()
-    with _db_lock:
-        con.executemany("INSERT INTO lakehouse.events VALUES (?,?,?,?,?,?,?)", rows)
+    con = _lake()
+    with _lake_lock:
+        con.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?)", rows)
     print(f"[collector] flushed {len(rows)} event(s) to the lake", flush=True)
 
 def _flusher():
@@ -171,8 +224,8 @@ def _compactor():
     while True:
         time.sleep(COMPACT_SECS)
         try:
-            with _db_lock:
-                _oltp().execute("CALL ducklake_merge_adjacent_files('lakehouse')")
+            with _lake_lock:
+                _lake().execute(f"CALL ducklake_merge_adjacent_files('{DUCKLAKE_DB}')")
             print("[collector] compacted the lake", flush=True)
         except Exception as e:
             print("[collector] compaction error:", e, file=sys.stderr)
@@ -184,7 +237,7 @@ def place_order(user_id, items):
     if not items:
         raise ValueError("cart is empty")
     con = _oltp()
-    with _db_lock:
+    with _oltp_lock:
         con.execute("BEGIN TRANSACTION")
         try:
             con.execute("INSERT INTO orders (user_id) VALUES (?)", [user_id])
@@ -215,7 +268,7 @@ def get_recommendations(user_id, limit=6):
     enough. A user with zero order history still gets the best-seller list,
     since my_products is simply empty for them."""
     con = _oltp()
-    with _db_lock:
+    with _oltp_lock:
         rows = con.execute("""
             WITH my_products AS (
                 SELECT DISTINCT oi.product_id
@@ -266,7 +319,7 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
     # GRAPH_TABLE breaks DuckDB's parameter-count check even for an unrelated
     # `?` elsewhere (confirmed: "Parameter argument/count mismatch"). ids and
     # limit are both server-controlled ints (int()-cast above), not user text.
-    with _db_lock:
+    with _oltp_lock:
         rows = con.execute(f"""
             WITH graph_hits AS (
                 SELECT product_id, sum(weight) AS score, 0 AS tier
@@ -294,62 +347,21 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
     return [r[0] for r in rows]
 
 def get_dashboard():
-    """Live marts, computed on demand from oltp.duckdb + the DuckLake catalog —
-    same shape as 04_marts.sql's funnel/retention/revenue, just expressed as
-    CTEs instead of intermediate tables, since this runs on every dashboard
-    poll and shouldn't write anything to disk on a path that shares a lock
-    with checkout."""
+    """revenue_by_category + totals only — the two dashboard numbers that
+    genuinely can't come from anywhere but here, since they need
+    oltp.duckdb (FK-constrained tables, not quack-reachable — see
+    _oltp()/_lake()). funnel/retention/daily used to live here too, but
+    public/dashboard.html now gets those exclusively via quack, straight
+    from the DuckLake connection, with no JSON fallback — see its
+    queryLakeStats()."""
     con = _oltp()
-    with _db_lock:
-        funnel = con.execute("""
-            WITH gaps AS (
-                SELECT user_id, event_ts, event_type,
-                       event_ts - LAG(event_ts) OVER (PARTITION BY user_id ORDER BY event_ts) AS gap
-                FROM lakehouse.events
-            ), session_events AS (
-                SELECT *, SUM(CASE WHEN gap IS NULL OR gap > INTERVAL 30 MINUTE THEN 1 ELSE 0 END)
-                          OVER (PARTITION BY user_id ORDER BY event_ts) AS session_num
-                FROM gaps
-            ), sessions AS (
-                SELECT bool_or(event_type = 'add_to_cart') AS reached_cart,
-                       bool_or(event_type = 'purchase')    AS reached_purchase
-                FROM session_events GROUP BY user_id, session_num
-            )
-            SELECT count(*) AS sessions,
-                   count(*) FILTER (WHERE reached_cart) AS carted,
-                   count(*) FILTER (WHERE reached_purchase) AS purchased,
-                   round(100.0 * count(*) FILTER (WHERE reached_cart) / count(*), 1) AS view_to_cart_pct,
-                   round(100.0 * count(*) FILTER (WHERE reached_purchase)
-                         / nullif(count(*) FILTER (WHERE reached_cart), 0), 1) AS cart_to_purchase_pct
-            FROM sessions
-        """).fetchone()
-
+    with _oltp_lock:
         revenue = con.execute("""
             SELECT p.category, count(DISTINCT o.order_id) AS orders, sum(oi.qty) AS units,
                    round(sum(oi.qty * oi.price_cents) / 100.0, 2) AS revenue_eur
             FROM orders o JOIN order_items oi USING (order_id) JOIN products p USING (product_id)
             WHERE o.status IN ('confirmed', 'shipped')
             GROUP BY p.category ORDER BY revenue_eur DESC
-        """).fetchall()
-
-        retention = con.execute("""
-            WITH activity AS (
-                SELECT DISTINCT user_id, date_trunc('week', event_ts) AS active_week FROM lakehouse.events
-            ), cohort AS (
-                SELECT user_id, min(active_week) AS cohort_week FROM activity GROUP BY user_id
-            )
-            SELECT CAST(date_diff('week', c.cohort_week, a.active_week) AS INTEGER) AS weeks_since,
-                   count(DISTINCT c.user_id) AS active_users
-            FROM cohort c JOIN activity a USING (user_id)
-            GROUP BY 1 ORDER BY 1
-        """).fetchall()
-
-        daily = con.execute("""
-            SELECT event_date::VARCHAR AS d,
-                   count(*) FILTER (WHERE event_type = 'pageview')    AS pageviews,
-                   count(*) FILTER (WHERE event_type = 'add_to_cart') AS carts,
-                   count(*) FILTER (WHERE event_type = 'purchase')    AS purchases
-            FROM lakehouse.events GROUP BY event_date ORDER BY event_date
         """).fetchall()
 
         totals = con.execute("""
@@ -360,15 +372,9 @@ def get_dashboard():
         """).fetchone()
 
     return {
-        "funnel": {
-            "sessions": funnel[0], "carted": funnel[1], "purchased": funnel[2],
-            "view_to_cart_pct": funnel[3], "cart_to_purchase_pct": funnel[4],
-        },
         "revenue_by_category": [
             {"category": r[0], "orders": r[1], "units": r[2], "revenue_eur": r[3]} for r in revenue
         ],
-        "retention": [{"weeks_since": r[0], "active_users": r[1]} for r in retention],
-        "daily": [{"date": r[0], "pageviews": r[1], "carts": r[2], "purchases": r[3]} for r in daily],
         "totals": {"orders": totals[0], "revenue_eur": round(totals[1], 2)},
     }
 
@@ -441,7 +447,8 @@ class Handler(SimpleHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    _oltp()  # connect + attach the lake right away, so startup fails loudly, not on first request
+    _oltp()  # connect (+ serve over quack) right away, so startup fails loudly, not on first request
+    _lake()
     threading.Thread(target=_flusher, daemon=True).start()
     threading.Thread(target=_compactor, daemon=True).start()
     print(f"[collector] storefront + tracking on http://localhost:{PORT}/  (Ctrl-C to stop)")
@@ -450,4 +457,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         flush()
         if _oltp_con: _oltp_con.close()
+        if _lake_con: _lake_con.close()
         print("\n[collector] flushed and stopped.")
