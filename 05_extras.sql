@@ -33,10 +33,10 @@ SET hnsw_enable_experimental_persistence = true;
 -- `order_items`, so `UPDATE products SET embedding = ...` fails even though it
 -- never touches product_id. Keep the vectors in their own table instead.
 --
--- Real (if simple) embeddings: a 16-dim hashed bag-of-words over name +
--- description (name double-weighted), no external model needed — same
--- formula public/index.html and collector.py use, so all three stay
--- consistent. Products with overlapping words land near each other.
+-- A simple real embedding: a 16-dim hashed bag-of-words over name +
+-- description (name double-weighted), no external model needed — the same
+-- formula public/index.html and collector.py use, so all three agree.
+-- Products with overlapping words land near each other.
 CREATE OR REPLACE TABLE _tokens AS
 SELECT product_id, unnest(string_split(
     regexp_replace(lower(name || ' ' || name || ' ' || description), '[^a-z0-9 ]', ' ', 'g'), ' '
@@ -125,5 +125,4 @@ LIMIT 1;
 --   USING (product_id);
 
 -- ---- F. Time travel over the lake (DuckLake) -------------------------------
--- Promoting the lake to a DuckLake catalog (snapshots + AS-OF queries + change
--- feed) has its own script now: see 06_ducklake.sql.
+-- Snapshots, AS-OF queries, and the change feed: see 06_ducklake.sql.

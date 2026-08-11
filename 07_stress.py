@@ -3,33 +3,24 @@
 07_stress.py — concurrent-writer stress test against the live DuckLake
 catalog, over Quack.
 
-Every other write path in Puddle funnels through collector.py's single
-connection (see its own docstring) — that's the honest way to run DuckDB.
-This script deliberately does the opposite: N independent processes-worth
-of threads, each with their own quack connection, all INSERTing into the
-same `events` table at once, to see what DuckDB's "multiple concurrent
-writers" claim (see the Quack announcement blog) actually looks like in
-practice rather than take it on faith.
+N threads, each with its own quack connection, INSERT into the same
+`events` table collector.py's live traffic writes to, all at once —
+a real exercise of DuckDB's "multiple concurrent writers" claim (see the
+Quack announcement blog), not just a claim taken on faith.
 
-Writes use real event_types (pageview/add_to_cart/purchase, roughly
-matching real traffic's mix) and land in the exact same `events` table
-collector.py's own live traffic does — on purpose: the whole point is to
-watch the dashboard's actual sessions/funnel/retention/daily numbers move
-live while this runs, not just a bespoke counter off to the side. (First
-version used a separate 'stress_write' type kept out of every real metric —
-technically clean, but pointless: readers couldn't see the writes land
-anywhere. Real types it is; a stress run visibly nudges the funnel and
-adds a retention blip for "today," and that's honest — it's exactly what
-a real traffic burst against this seed data would do too.) Each row is
-still tagged `props: {"stress": true, "worker": N}` so it can be counted
-separately — see public/dashboard.html's pollStressWrites(), which filters
-on that instead of event_type.
+Writes use real event_types (pageview/add_to_cart/purchase, weighted like
+real traffic) and are ordinary rows in every other respect, so a run
+visibly moves the dashboard's sessions/funnel/retention/daily numbers —
+seed data is dated months in the past, so a burst of writes shows up as a
+genuine spike on "today," the same way real traffic would. Each row is
+tagged `props: {"stress": true, "worker": N}` so public/dashboard.html's
+pollStressWrites() can count them separately from organic traffic.
 
     python3 07_stress.py                      # 8 workers, 10s, defaults
     python3 07_stress.py --workers 16 --duration 5
 
-Needs collector.py running (it's what calls quack_serve() on the DuckLake
-connection — see _lake() there).
+Needs collector.py running — it's what calls quack_serve() on the DuckLake
+connection (see _lake() there).
 """
 import argparse, json, threading, time, random, datetime as dt
 

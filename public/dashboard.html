@@ -156,20 +156,19 @@ const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximum
 // collector.py's DuckLake connection over HTTP, no /dashboard-data round-trip)
 // -------------------------------------------------------------------------------
 // revenue_by_category/totals stay on /dashboard-data below: they need
-// oltp.duckdb, and confirmed that a beta bug in this quack release makes any
-// FOREIGN-KEY table (i.e. every real table oltp.duckdb has) invisible to
-// remote clients. The lake's `events` table has no FK, so it works. Dynamic
-// import() (not a <script type="module">) so this doesn't change how the
-// rest of this classic script executes. No fallback: if this fails, the
-// funnel/retention/daily cards just show a waiting/empty state rather than
-// silently serving stale-shaped data from /dashboard-data (which no longer
-// computes them at all — see collector.py's get_dashboard()).
+// oltp.duckdb, and every real table there has a FOREIGN KEY, which this
+// beta release of quack makes invisible to remote clients. The lake's
+// `events` table has no FK, so it works. Dynamic import() (not a <script
+// type="module">) so this doesn't change how the rest of this classic
+// script executes. No fallback: collector.py's get_dashboard() doesn't
+// compute funnel/retention/daily at all, so if this fails, those cards
+// just show a waiting/empty state instead of stale or re-fetched data.
 //
-// Pinned newer than index.html's duckdb-wasm@1.29.0 — confirmed empirically
-// that 1.29.0 can INSTALL/LOAD the quack extension (its functions work) but
-// doesn't have quack's ATTACH/storage support yet ("Unrecognized storage
-// type"). This exact dev build does. Pinned rather than @latest so this
-// doesn't silently break if a newer build changes something.
+// Pinned newer than index.html's duckdb-wasm@1.29.0 — 1.29.0 can
+// INSTALL/LOAD the quack extension (its functions work) but doesn't have
+// quack's ATTACH/storage support ("Unrecognized storage type"); this exact
+// dev build does. Pinned rather than @latest so this doesn't silently
+// break if a newer build changes something.
 let hasQuack = false, quackConn = null;
 
 async function bootQuack() {
@@ -199,10 +198,9 @@ const rowsOf = res => res.toArray().map(r => {
   return o;
 });
 
-// 07_stress.py's concurrent-writer demo writes real event_types straight
-// into this same table, deliberately included in every query below — see
-// its docstring for why (short version: so the stress test visibly moves
-// these numbers instead of writing into a universe nobody can see).
+// 07_stress.py's concurrent-writer demo writes real event_types into this
+// same table, so its rows count in every query below along with organic
+// traffic — see its docstring.
 async function queryLakeStats() {
   const [funnel] = rowsOf(await quackConn.query(`
     WITH gaps AS (
@@ -254,9 +252,9 @@ async function queryLakeStats() {
 // (see 07_stress.py) — same quack connection as queryLakeStats(), but its
 // own faster poll loop so the count visibly climbs while a stress test is
 // running instead of waiting on the main 4s dashboard cycle. 07_stress.py's
-// rows use real event_types (they count in queryLakeStats() above too, on
-// purpose) but are still tagged `props: {"stress": true}`, so this counts
-// them specifically via that tag rather than event_type.
+// rows use real event_types (so they also count in queryLakeStats() above)
+// but are tagged `props: {"stress": true}`, so this counts them
+// specifically via that tag rather than event_type.
 let lastStressCount = null, lastStressAt = null;
 const STRESS_POLL_MS = 1000;
 
@@ -396,8 +394,8 @@ function revenueChart(rows) {
 // ---- assemble the page --------------------------------------------------------
 // d.funnel/retention/daily are `null` until the live Quack connection answers
 // its first query — no /dashboard-data fallback for these three, see
-// queryLakeStats(). `waiting` renders a placeholder instead of a chart; once
-// non-null they're real (possibly empty) results, same as before.
+// queryLakeStats(). `waiting` renders a placeholder instead of a chart;
+// once non-null they're real results (possibly empty arrays/objects).
 const waiting = `<div class="empty">Waiting for the live Quack connection…</div>`;
 let prevData = null;
 

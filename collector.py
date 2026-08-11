@@ -2,22 +2,20 @@
 """
 collector.py — Puddle's single-writer event collector.
 
-Two single-writer DuckDB connections, one for oltp.duckdb and one for the
-DuckLake catalog (see _oltp()/_lake()) — same "single writer" discipline the
-OLTP tier always used, now for the clickstream too. The DuckLake connection
-is also served over Quack (DuckDB's own HTTP client-server protocol, core
-since v1.5.3): another process can ATTACH to it over the network and read/
-write events while this one is running, instead of needing the file
-directly. oltp.duckdb isn't quack-served — a confirmed bug in this beta
-release makes any table with a FOREIGN KEY invisible to remote clients, and
-that's every real table oltp.duckdb has, so its single-writer limitation is
-unchanged (see the comment above _oltp()/_lake() for the full story). It:
+Two single-writer DuckDB connections: one for oltp.duckdb, one for the
+DuckLake catalog (see _oltp()/_lake()). The DuckLake connection is also
+served over Quack (DuckDB's own HTTP client-server protocol): another
+process can ATTACH to it over the network and read/write events while this
+one keeps running, instead of needing the file directly. oltp.duckdb is
+not quack-served — every real table there has a FOREIGN KEY, and this beta
+release of quack makes FK tables invisible to remote clients (see the
+comment above _oltp()/_lake()).
 
   • serves the storefront from ./public  (so the tracker posts same-origin)
   • accepts POST /collect events and appends them to the DuckLake catalog,
     in the SAME schema 04_marts.sql reads — live events land in the funnel.
-  • GET /dashboard-data computes that same funnel/retention/revenue live,
-    straight from oltp.duckdb + the lake, for public/dashboard.html.
+  • GET /dashboard-data serves revenue/totals for public/dashboard.html —
+    its funnel/retention/daily come directly from the browser over quack.
 
 Run from the repo root:   python3 collector.py    ->    http://localhost:8787/
 Events batch on size or every few seconds, then INSERT as one transaction —
@@ -45,8 +43,8 @@ COMPACT_SECS = 60.0         # how often to merge small lake files in the backgro
 # those scripts, and this file's own docstring: run collector.py from the repo root.
 DUCKLAKE_CATALOG = "puddle_catalog.ducklake"
 # DuckLake's own database name once opened directly (not ATTACHed under an
-# alias) is the file stem — confirmed empirically. Needed by name for
-# ducklake_merge_adjacent_files() below.
+# alias) is the file stem. Needed by name for ducklake_merge_adjacent_files()
+# below.
 DUCKLAKE_DB      = os.path.splitext(DUCKLAKE_CATALOG)[0]
 
 # Plain fixed token — this is a localhost-only demo (quack_serve defaults
@@ -56,29 +54,25 @@ QUACK_TOKEN    = "puddle-demo-token"
 QUACK_LAKE_PORT = 8789
 
 # ---- the single writer, twice over: oltp.duckdb and the DuckLake catalog ---
-# Each file still only allows one connection to hold it — DuckDB's
-# single-writer model is unchanged. The DuckLake connection additionally
-# calls quack_serve() (DuckDB's own HTTP client-server protocol, core since
-# v1.5.3): a SECOND process can ATTACH to it over the network and read/write
-# events while this process is running, instead of needing the file
-# directly. oltp.duckdb deliberately does NOT get the same treatment —
-# confirmed empirically that this beta release of quack makes any table
-# with a FOREIGN KEY invisible to remote clients (PRIMARY KEY and CHECK are
-# fine; REFERENCES is not), and every real table in oltp.duckdb has one.
-# That's the entire point of the OLTP tier, so working around it by
-# dropping the constraints isn't on the table — oltp.duckdb's single-writer
-# limitation stands as-is until quack's bug is fixed upstream (see README).
-# Also confirmed: DuckLake time travel (`AT (VERSION => n)`,
-# ducklake_snapshots) does NOT work through a quack attachment at all yet —
-# real, on the DuckDB team's own roadmap, not a Puddle-specific limitation
-# — so 06_ducklake.sql still needs the file directly regardless.
+# Each file only allows one connection to hold it — DuckDB's single-writer
+# model. The DuckLake connection additionally calls quack_serve(): a second
+# process can ATTACH to it over the network and read/write events while
+# this process is running, instead of needing the file directly.
 #
-# oltp and the lake are two separate connections (rather than one, with the
-# lake ATTACHed alongside oltp like before) because a quack server only
-# exposes its own PRIMARY database to clients, confirmed empirically — and
-# the lake connection needs to be primary for quack_serve() to expose it at
-# all. Both connect lazily so importing this module (as the collection-path
-# tests do) never touches either file.
+# oltp.duckdb does not get the same treatment: this beta release of quack
+# makes any table with a FOREIGN KEY invisible to remote clients (PRIMARY
+# KEY and CHECK are fine; REFERENCES is not), and every real table in
+# oltp.duckdb has one — real constraints are the entire point of the OLTP
+# tier, so they stay, and oltp.duckdb's single-writer limitation stands
+# (see README). DuckLake time travel (`AT (VERSION => n)`,
+# ducklake_snapshots) also doesn't work through a quack attachment yet, so
+# 06_ducklake.sql needs the file directly regardless.
+#
+# oltp and the lake are two separate connections because a quack server
+# only exposes its own PRIMARY database to clients — the lake connection
+# needs to be primary for quack_serve() to expose it at all. Both connect
+# lazily so importing this module (as the collection-path tests do) never
+# touches either file.
 _oltp_con, _oltp_lock = None, threading.Lock()
 _lake_con, _lake_lock = None, threading.Lock()
 _has_hybrid = False
@@ -97,11 +91,10 @@ def _oltp():
 
 def _lake():
     """Opens the DuckLake catalog directly as this connection's own primary
-    database — not ATTACHed alongside oltp.duckdb like before — and serves
-    it over quack (see the module-level note above). Best-effort: quack is
-    core in DuckDB v1.5.3+, but an older DuckDB just means no remote access
-    to the lake, not a crash — same tolerance as the hybrid recommender's
-    duckpgq dependency."""
+    database and serves it over quack (see the module-level note above).
+    Best-effort: quack is core in DuckDB v1.5.3+, but an older DuckDB just
+    means no remote access to the lake, not a crash — same tolerance as
+    the hybrid recommender's duckpgq dependency."""
     global _lake_con
     if _lake_con is None:
         con = duckdb.connect(f"ducklake:{DUCKLAKE_CATALOG}")
@@ -304,21 +297,22 @@ def get_recommendations(user_id, limit=6):
     return [r[0] for r in rows]
 
 def get_hybrid_recommendations(purchased_ids, limit=4):
-    """"Since you brought them home" — a real hybrid recommender: DuckPGQ
+    """"Since you brought them home" — a hybrid recommender: DuckPGQ
     co-purchase graph traversal (who else bought these, tier 0) fused with
     text-embedding similarity (tier 1 fallback, same tiered pattern as
     get_recommendations() above). Runs server-side because DuckPGQ doesn't
-    load in DuckDB-WASM (confirmed) — unlike "Ducks like this", which stays
-    fully client-side. See _setup_hybrid()."""
+    load in DuckDB-WASM, unlike "Ducks like this," which stays fully
+    client-side. See _setup_hybrid()."""
     if not _has_hybrid or not purchased_ids:
         return []
     con = _oltp()
     ids = ",".join(str(int(i)) for i in purchased_ids)
     limit = int(limit)
-    # NOTE: no `?` placeholders here, even for LIMIT — a query containing
-    # GRAPH_TABLE breaks DuckDB's parameter-count check even for an unrelated
-    # `?` elsewhere (confirmed: "Parameter argument/count mismatch"). ids and
-    # limit are both server-controlled ints (int()-cast above), not user text.
+    # No `?` placeholders here, even for LIMIT — a query containing
+    # GRAPH_TABLE breaks DuckDB's parameter-count check even for an
+    # unrelated `?` elsewhere ("Parameter argument/count mismatch"). ids
+    # and limit are both server-controlled ints (int()-cast above), not
+    # user text.
     with _oltp_lock:
         rows = con.execute(f"""
             WITH graph_hits AS (
@@ -347,13 +341,10 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
     return [r[0] for r in rows]
 
 def get_dashboard():
-    """revenue_by_category + totals only — the two dashboard numbers that
-    genuinely can't come from anywhere but here, since they need
+    """revenue_by_category + totals — the dashboard numbers that need
     oltp.duckdb (FK-constrained tables, not quack-reachable — see
-    _oltp()/_lake()). funnel/retention/daily used to live here too, but
-    public/dashboard.html now gets those exclusively via quack, straight
-    from the DuckLake connection, with no JSON fallback — see its
-    queryLakeStats()."""
+    _oltp()/_lake()). public/dashboard.html gets funnel/retention/daily
+    directly via quack instead; see its queryLakeStats()."""
     con = _oltp()
     with _oltp_lock:
         revenue = con.execute("""

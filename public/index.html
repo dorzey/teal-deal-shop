@@ -444,9 +444,9 @@ async function boot() {
   await db.registerFileBuffer('catalog.parquet', buf);
   await conn.query(`CREATE TABLE catalog AS SELECT * FROM read_parquet('catalog.parquet')`);
 
-  // Real full-text search (BM25), same fts block as 05_extras.sql — confirmed
-  // INSTALL/LOAD fts and create_fts_index/match_bm25 all work in-browser too.
-  // Falls back to the old ILIKE substring match if it can't load.
+  // Full-text search (BM25), same fts block as 05_extras.sql — INSTALL/LOAD
+  // fts and create_fts_index/match_bm25 all work in-browser. Falls back to
+  // ILIKE substring matching if fts can't load.
   try {
     await conn.query(`INSTALL fts`);
     await conn.query(`LOAD fts`);
@@ -454,11 +454,12 @@ async function boot() {
     hasFts = true;
   } catch (e) { console.warn('fts unavailable — falling back to ILIKE search', e); }
 
-  // "Ducks like this": DuckDB-WASM can load the vss extension itself (confirmed —
-  // INSTALL/LOAD vss and array_distance all work in-browser), so recommendations
-  // are computed live, right here, from a real text embedding (hashed bag-of-words
-  // over name+description, same formula as 05_extras.sql / collector.py) — no
-  // precompute, export step, or external model needed.
+  // "Ducks like this": DuckDB-WASM can load the vss extension itself —
+  // INSTALL/LOAD vss and array_distance both work in-browser — so
+  // recommendations are computed live, right here, from a real text
+  // embedding (hashed bag-of-words over name+description, same formula as
+  // 05_extras.sql / collector.py). No precompute, export step, or
+  // external model needed.
   try {
     await conn.query(`INSTALL vss`);
     await conn.query(`LOAD vss`);
@@ -654,8 +655,8 @@ async function showPostPurchaseRecs(purchasedIds) {
   // 1. Hybrid: DuckPGQ co-purchase graph (behavioral signal) fused with real
   // text-embedding similarity (content signal), server-side — see
   // collector.py's get_hybrid_recommendations(). DuckPGQ doesn't load in
-  // DuckDB-WASM (confirmed), so unlike "Ducks like this" this can't run
-  // purely client-side.
+  // DuckDB-WASM, so unlike "Ducks like this" this can't run purely
+  // client-side.
   if (purchasedIds.length) {
     try {
       const res = await fetch(`/hybrid-recommendations?product_ids=${purchasedIds.join(',')}`);

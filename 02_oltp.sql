@@ -45,7 +45,7 @@ JOIN inventory   inv USING (product_id)
 WHERE o.order_id = currval('order_seq')
 ORDER BY oi.product_id;
 
--- ---- The oversell case (demonstrated live in run.py) ------------------------
+-- ---- The oversell case ------------------------------------------------------
 -- Uncomment to watch the CHECK fire and abort the transaction:
 --
 --   BEGIN TRANSACTION;

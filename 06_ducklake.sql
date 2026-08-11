@@ -6,13 +6,11 @@
 --     Run where extensions can install:
 --         duckdb -f 06_ducklake.sql
 --
--- 03_lake.sql already landed the clickstream directly into this DuckLake
--- catalog (not a bare Parquet directory) in three chronological waves, so
--- there are real snapshots to travel between right out of the box — no
--- separate "promote it to DuckLake" ingestion step needed here anymore.
--- collector.py adds more snapshots on top as live events/orders flow in and
--- it periodically flushes, so if you've run it since seeding, expect a
--- higher max snapshot than what this script assumes below.
+-- 03_lake.sql lands the clickstream directly into this DuckLake catalog in
+-- three chronological waves, so there are real snapshots to travel between
+-- right out of the box. collector.py adds more on top as live events flow
+-- in and it periodically flushes, so a server that's been running will
+-- show a higher max snapshot than the versions this script assumes below.
 -- ============================================================================
 
 INSTALL ducklake;
