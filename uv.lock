@@ -18,7 +18,7 @@ wheels = [
 ]
 
 [[package]]
-name = "puddle"
+name = "teal-deal"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

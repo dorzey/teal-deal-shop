@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-collector.py — Puddle's single-writer event collector.
+collector.py — Teal Deal's single-writer event collector.
 
 Two single-writer DuckDB connections: one for oltp.duckdb, one for the
 DuckLake catalog (see _oltp()/_lake()). The DuckLake connection is also
@@ -39,7 +39,7 @@ COMPACT_SECS = 60.0         # how often to merge small lake files in the backgro
 # ATTACHes to match it verbatim (relative vs. absolute counts as a mismatch),
 # so this can't be ROOT-absolute like oltp.duckdb's path below. Consistent with
 # those scripts, and this file's own docstring: run collector.py from the repo root.
-DUCKLAKE_CATALOG = "puddle_catalog.ducklake"
+DUCKLAKE_CATALOG = "teal_deal_catalog.ducklake"
 # DuckLake's own database name once opened directly (not ATTACHed under an
 # alias) is the file stem. Needed by name for ducklake_merge_adjacent_files()
 # below.
@@ -48,7 +48,7 @@ DUCKLAKE_DB      = os.path.splitext(DUCKLAKE_CATALOG)[0]
 # Plain fixed token — this is a localhost-only demo (quack_serve defaults
 # allow_other_hostname to false), no different from oltp.duckdb having no
 # auth today. A real deployment would generate + guard this properly.
-QUACK_TOKEN    = "puddle-demo-token"
+QUACK_TOKEN    = "teal-deal-demo-token"
 QUACK_LAKE_PORT = 8789
 QUACK_OLTP_PORT = 8790
 

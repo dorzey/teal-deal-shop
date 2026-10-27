@@ -16,7 +16,7 @@
 
 INSTALL ducklake;
 ATTACH IF NOT EXISTS 'oltp.duckdb' AS oltp (READ_ONLY);
-ATTACH IF NOT EXISTS 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
+ATTACH IF NOT EXISTS 'ducklake:teal_deal_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
 
 -- Convenience view over the DuckLake clickstream catalog. Includes any
 -- traffic from 07_stress.py's concurrent-writer test — those rows are

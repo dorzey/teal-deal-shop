@@ -15,7 +15,7 @@
 
 INSTALL ducklake;
 
-ATTACH 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
+ATTACH 'ducklake:teal_deal_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
 USE lakehouse;
 
 -- ---- The snapshot log ------------------------------------------------------

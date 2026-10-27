@@ -14,7 +14,7 @@
 INSTALL ducklake;
 
 -- Catalog metadata in a local file; data files land under lakehouse_data/.
-ATTACH 'ducklake:puddle_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
+ATTACH 'ducklake:teal_deal_catalog.ducklake' AS lakehouse (DATA_PATH 'lakehouse_data/');
 
 CREATE TABLE IF NOT EXISTS lakehouse.events (
     event_id   BIGINT,

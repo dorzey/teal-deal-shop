@@ -1,4 +1,4 @@
-# 🦆 Puddle — one duck shop, every tier on DuckDB
+# 🦆 Teal Deal — one duck shop, every tier on DuckDB
 
 A toy e-commerce platform where **DuckDB is the database for everything**: the
 transaction that sells a duck, the clickstream that recorded the visit, the
@@ -14,7 +14,7 @@ most interesting corner to build, and the one seam left deliberately visible.
 oltp.duckdb        transactions: users, products, inventory, orders  (single writer)
 tracker.js         browser tracker: fires pageview/add_to_cart events
 collector.py       single-writer collector: storefront + events + real checkout + live stats
-puddle_catalog.ducklake + lakehouse_data/   clickstream lake (DuckLake catalog, append-only truth)
+teal_deal_catalog.ducklake + lakehouse_data/   clickstream lake (DuckLake catalog, append-only truth)
 06_ducklake.sql    explores the live catalog                         (snapshots + time travel)
 07_stress.py       concurrent-writer stress test over quack          (multiple writers, live)
 marts.duckdb       downstream analytics: sessions, funnel, retention  (attaches oltp + the lake)
@@ -111,7 +111,7 @@ keeps running*, instead of needing the file directly:
 ```bash
 duckdb -c "
   INSTALL quack; LOAD quack;
-  ATTACH 'quack:localhost:8789' AS remote (TOKEN 'puddle-demo-token');
+  ATTACH 'quack:localhost:8789' AS remote (TOKEN 'teal-deal-demo-token');
   SELECT event_type, count(*) FROM remote.events GROUP BY event_type;
 "
 ```

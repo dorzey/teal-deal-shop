@@ -1,5 +1,5 @@
 // ============================================================================
-// tracker.js — Puddle's tiny web-analytics tracker.
+// tracker.js — Teal Deal's tiny web-analytics tracker.
 //
 // Fires pageview / add_to_cart / purchase events at the collector. Keeps a
 // durable anonymous visitor_id and a 30-minute session_id in localStorage, and
@@ -7,7 +7,7 @@
 //
 // Usage in a page:
 //   <script src="tracker.js" data-collector="http://localhost:8787/collect"></script>
-//   puddle.track('add_to_cart', { product_id: 42 });
+//   tealDeal.track('add_to_cart', { product_id: 42 });
 // A pageview fires automatically on load.
 // ============================================================================
 (function () {
@@ -18,18 +18,18 @@
   const uuid = () => crypto.randomUUID();
 
   function visitorId() {
-    let v = localStorage.getItem('puddle_visitor');
-    if (!v) { v = uuid(); localStorage.setItem('puddle_visitor', v); }
+    let v = localStorage.getItem('teal_deal_visitor');
+    if (!v) { v = uuid(); localStorage.setItem('teal_deal_visitor', v); }
     return v;
   }
 
   function sessionId() {
     const now = Date.now();
-    const last = +localStorage.getItem('puddle_session_ts') || 0;
-    let sid = localStorage.getItem('puddle_session');
+    const last = +localStorage.getItem('teal_deal_session_ts') || 0;
+    let sid = localStorage.getItem('teal_deal_session');
     if (!sid || now - last > SESSION_TIMEOUT_MS) sid = uuid();   // new session on timeout
-    localStorage.setItem('puddle_session', sid);
-    localStorage.setItem('puddle_session_ts', String(now));
+    localStorage.setItem('teal_deal_session', sid);
+    localStorage.setItem('teal_deal_session_ts', String(now));
     return sid;
   }
 
@@ -55,7 +55,7 @@
     });
   }
 
-  window.puddle = { track, visitorId: visitorId() };
+  window.tealDeal = { track, visitorId: visitorId() };
   // Auto pageview once the tab is interactive.
   if (document.readyState !== 'loading') track('pageview');
   else document.addEventListener('DOMContentLoaded', () => track('pageview'));

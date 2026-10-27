@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Puddle — build the whole toy platform from scratch, then serve it.
+# Teal Deal — build the whole toy platform from scratch, then serve it.
 # Override the binary with:  DUCKDB=/path/to/duckdb ./run.sh
 # When this finishes building, it starts the live server itself — no extra
 # steps. Ctrl-C stops it (it flushes cleanly on exit). Re-running ./run.sh
@@ -14,7 +14,7 @@ uv sync
 
 echo "==> reset"
 pkill -INT -f "python3 collector.py" 2>/dev/null || true   # SIGINT so it flushes + closes cleanly, like Ctrl-C
-rm -f oltp.duckdb marts.duckdb puddle_catalog.ducklake
+rm -f oltp.duckdb marts.duckdb teal_deal_catalog.ducklake
 rm -rf lakehouse_data && mkdir -p public
 
 echo "==> 01  seed OLTP (schema, constraints, synthetic data)"
@@ -50,7 +50,7 @@ fi
 
 cat <<EOF
 
-Built: oltp.duckdb, marts.duckdb, puddle_catalog.ducklake (+ lakehouse_data/), public/catalog.parquet
+Built: oltp.duckdb, marts.duckdb, teal_deal_catalog.ducklake (+ lakehouse_data/), public/catalog.parquet
 
 ==> starting the live storefront + tracking + Duck HQ dashboard
         http://localhost:8787/                  storefront

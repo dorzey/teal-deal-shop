@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Duck HQ 🦆 — Puddle's live dashboard</title>
+<title>Duck HQ 🦆 — Teal Deal's live dashboard</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -189,7 +189,7 @@ async function bootQuack() {
     quackConn = await db.connect();
     await quackConn.query(`INSTALL quack`);
     await quackConn.query(`LOAD quack`);
-    await quackConn.query(`ATTACH 'quack:localhost:8789' AS remote (TOKEN 'puddle-demo-token')`);
+    await quackConn.query(`ATTACH 'quack:localhost:8789' AS remote (TOKEN 'teal-deal-demo-token')`);
     hasQuack = true;
   } catch (e) {
     console.warn('quack unavailable — funnel/retention/daily will stay in their waiting state', e);

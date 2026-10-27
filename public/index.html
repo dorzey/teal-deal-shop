@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Puddle 🦆 — a very serious duck emporium, running in your browser</title>
+<title>Teal Deal 🦆 — a very serious duck emporium, running in your browser</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -318,7 +318,7 @@
 <div class="wrap">
   <header>
     <div class="mark">
-      <h1>Puddle<span class="mascotwrap"><span class="mascot" id="mascot" aria-hidden="true">🦆</span><span class="bubble" id="mascotBubble"></span></span></h1>
+      <h1>Teal Deal<span class="mascotwrap"><span class="mascot" id="mascot" aria-hidden="true">🦆</span><span class="bubble" id="mascotBubble"></span></span></h1>
       <span class="tag">Waddle you buy today?</span>
       <span class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling DuckDB into your browser…</span></span>
       <a class="navlink" href="./dashboard.html">📊 Duck HQ</a>
@@ -658,7 +658,7 @@ function hashUser(s) {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (Math.abs(h) % 500) + 1;
 }
-const userId = hashUser((window.puddle && window.puddle.visitorId) || String(Math.random()));
+const userId = hashUser((window.tealDeal && window.tealDeal.visitorId) || String(Math.random()));
 
 const cart = new Map(); // product_id -> { name, price_eur, qty }
 
@@ -683,7 +683,7 @@ function addToFlock(id, name, price) {
   cart.set(id, { name, price_eur: price, qty: (existing?.qty || 0) + 1 });
   renderCart();
   mascotMood('hop');
-  if (window.puddle) window.puddle.track('add_to_cart', { product_id: id });
+  if (window.tealDeal) window.tealDeal.track('add_to_cart', { product_id: id });
   showToast(`Added ${name} to your flock — quack tracked 📡`);
 }
 
@@ -787,7 +787,7 @@ async function placeOrder() {
 }
 $('checkoutBtn').addEventListener('click', placeOrder);
 
-// Add-to-flock -> real cart line + a tracked event via tracker.js (window.puddle).
+// Add-to-flock -> real cart line + a tracked event via tracker.js (window.tealDeal).
 $('grid').addEventListener('click', e => {
   const btn = e.target.closest('.cart');
   if (!btn || btn.disabled) return;

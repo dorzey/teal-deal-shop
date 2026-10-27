@@ -19,7 +19,7 @@ CREATE OR REPLACE TABLE users (
 INSERT INTO users
 SELECT
     id                                             AS user_id,
-    'user' || id || '@puddle.shop'                 AS email,
+    'user' || id || '@tealdeal.shop'                 AS email,
     ['NL','DE','FR','GB','US'][(id % 5) + 1]       AS country,
     TIMESTAMP '2025-01-01' + INTERVAL (id * 37) MINUTE AS signed_up
 FROM range(1, 501) t(id);

@@ -1,5 +1,5 @@
 [project]
-name = "puddle"
+name = "teal-deal"
 version = "0.1.0"
 description = "One duck shop, every tier on DuckDB"
 requires-python = ">=3.13"
