@@ -13,6 +13,7 @@ most interesting corner to build, and the one seam left deliberately visible.
 ```
 oltp.duckdb        transactions: users, products, inventory, orders  (single writer)
 tracker.js         browser tracker: fires pageview/add_to_cart events
+make_sprites.py    generates public/ducks.svg, one drake sprite per species
 collector.py       single-writer collector: storefront + events + real checkout + live stats
 teal_deal_catalog.ducklake + lakehouse_data/   clickstream lake (DuckLake catalog, append-only truth)
 06_ducklake.sql    explores the live catalog                         (snapshots + time travel)

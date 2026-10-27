@@ -22,10 +22,10 @@
     --chart-grid: #E1E0D9;
     --chart-axis: #C3C2B7;
     --chart-text: var(--muted);
-    --cat-bath: #0E86A0;        /* teal   */
-    --cat-decor: #8B5FBF;       /* violet */
-    --cat-collectible: #E0A400; /* gold   */
-    --cat-outdoor: #FF8C42;     /* orange (= --bill) */
+    --cat-dabbling: #0E86A0;        /* teal   */
+    --cat-diving: #8B5FBF;       /* violet */
+    --cat-sea: #E0A400; /* gold   */
+    --cat-perching: #FF8C42;     /* orange (= --bill) */
     --ord-1: #6EBBCF; --ord-2: #0E86A0; --ord-3: #0A4E5C; /* funnel ramp, light->dark */
   }
   *{box-sizing:border-box}
@@ -148,8 +148,8 @@
 <script>
 const $ = id => document.getElementById(id);
 
-const CATEGORY_EMOJI = { bath:'🛁', decor:'🖼️', collectible:'🏆', outdoor:'🌳' };
-const CATEGORY_COLOR = { bath:'var(--cat-bath)', decor:'var(--cat-decor)', collectible:'var(--cat-collectible)', outdoor:'var(--cat-outdoor)' };
+const CATEGORY_EMOJI = { dabbling:'🦆', diving:'🤿', sea:'🌊', perching:'🌳' };
+const CATEGORY_COLOR = { dabbling:'var(--cat-dabbling)', diving:'var(--cat-diving)', sea:'var(--cat-sea)', perching:'var(--cat-perching)' };
 
 const num = v => typeof v === 'bigint' ? Number(v) : v;
 const fmtCompact = n => n.toLocaleString('en', { notation: 'compact', maximumFractionDigits: 1 });
@@ -390,7 +390,7 @@ function revenueChart(rows) {
   const data = rows.map(r => ({
     label: `${CATEGORY_EMOJI[r.category] || ''} ${r.category}`,
     value: num(r.revenue_eur),
-    color: CATEGORY_COLOR[r.category] || 'var(--cat-bath)',
+    color: CATEGORY_COLOR[r.category] || 'var(--cat-dabbling)',
   }));
   return barChart({ data, valueFmt: v => fmtQ(v) });
 }
@@ -451,9 +451,9 @@ function render(d) {
         ${d.daily === null ? waiting : (d.daily.length ? lineChart({
           data: d.daily.map(r => ({ x: r.date.slice(5), pageviews: num(r.pageviews), carts: num(r.carts), purchases: num(r.purchases) })),
           series: [
-            { key: 'pageviews', label: 'Pageviews', color: 'var(--cat-bath)' },
-            { key: 'carts', label: 'Add to flock', color: 'var(--cat-outdoor)' },
-            { key: 'purchases', label: 'Taken home', color: 'var(--cat-decor)' },
+            { key: 'pageviews', label: 'Pageviews', color: 'var(--cat-dabbling)' },
+            { key: 'carts', label: 'Add to flock', color: 'var(--cat-perching)' },
+            { key: 'purchases', label: 'Taken home', color: 'var(--cat-diving)' },
           ],
         }) : `<div class="empty">No events yet.</div>`)}
       </div>

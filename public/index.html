@@ -256,6 +256,7 @@
     font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.06em;
     text-transform:uppercase;color:var(--teal);
   }
+  .card .duck{display:block;width:100%;height:84px;margin:-2px 0 2px}
   .card .name{font-family:'Fredoka',sans-serif;font-weight:500;font-size:16.5px;line-height:1.25}
   .card .desc{font-size:12.5px;color:var(--muted);line-height:1.45;flex:1}
   .card .foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
@@ -405,8 +406,8 @@
 import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
 
 const $ = id => document.getElementById(id);
-const CATEGORIES = ['bath','decor','collectible','outdoor'];
-const CATEGORY_EMOJI = { bath:'🛁', decor:'🖼️', collectible:'🏆', outdoor:'🌳' };
+const CATEGORIES = ['dabbling','diving','sea','perching'];
+const CATEGORY_EMOJI = { dabbling:'🦆', diving:'🤿', sea:'🌊', perching:'🌳' };
 const state = { q:'', cats:new Set(), maxPrice:50, inStock:false, sort:'rating DESC' };
 let conn = null;
 let hasRecs = false;
@@ -594,6 +595,7 @@ function logQuery(sql, ms, rows) {
 
 const num = v => typeof v === 'bigint' ? Number(v) : v;
 const stars = r => { const f = Math.round(r); return '<span class="star">'+'★'.repeat(f)+'</span>'+'☆'.repeat(5-f); };
+const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const quacker = amount => `<span class="quacker">Q</span>${amount}`;
 
 // ---- run query + render ----
@@ -614,6 +616,7 @@ async function run() {
   grid.innerHTML = rows.map(r => {
     const inStock = num(r.in_stock);
     return `<div class="card">
+      <svg class="duck" role="img" aria-label="${r.name}"><use href="ducks.svg#${slug(r.name)}"/></svg>
       <span class="cat">${CATEGORY_EMOJI[r.category] || ''} ${r.category}</span>
       <span class="name">${r.name}</span>
       <span class="desc">${r.description}</span>

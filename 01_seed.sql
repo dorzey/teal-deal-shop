@@ -33,19 +33,78 @@ CREATE OR REPLACE TABLE products (
     description VARCHAR NOT NULL
 );
 
+-- Sixty real duck species, grouped by how they feed. ids are assigned in hash
+-- order so categories interleave (otherwise a category would own a contiguous
+-- id block and the modular order formulas below would skew its revenue).
 INSERT INTO products
 SELECT
-    id AS product_id,
-    ['Rubber','Mallard','Teal','Muscovy','Wood','Pintail','Eider','Merganser'][(id % 8) + 1]
-        || ' ' ||
-    ['Duck','Decoy','Float','Toy','Charm','Figurine'][(id % 6) + 1]     AS name,
-    ['bath','decor','collectible','outdoor'][(id % 4) + 1]              AS category,
-    ((id * 137) % 4500) + 500                                          AS price_cents,
-    'A delightful '
-        || ['classic','handcrafted','waterproof','limited-edition','vintage'][(id % 5) + 1]
-        || ' duck for '
-        || ['the bath','your shelf','the pond','collectors'][(id % 4) + 1]  AS description
-FROM range(1, 61) t(id);
+    row_number() OVER (ORDER BY hash(name))                            AS product_id,
+    name,
+    category,
+    ((row_number() OVER (ORDER BY hash(name)) * 137) % 4500) + 500     AS price_cents,
+    description
+FROM (VALUES
+    ('Mallard', 'dabbling', 'Classic green-headed duck; the ancestor of most farmyard ducks'),
+    ('Northern Pintail', 'dabbling', 'Elegant long-necked duck with a slender pointed tail'),
+    ('Green-winged Teal', 'dabbling', 'Smallest dabbling duck, quick and acrobatic in flight'),
+    ('Blue-winged Teal', 'dabbling', 'Small migrant with a white crescent on the face'),
+    ('Cinnamon Teal', 'dabbling', 'Rich rust-red plumage, rare in a pond near you'),
+    ('Gadwall', 'dabbling', 'Understated grey duck that steals weed from diving coots'),
+    ('Eurasian Wigeon', 'dabbling', 'Chestnut head, cream forehead, whistles instead of quacking'),
+    ('American Wigeon', 'dabbling', 'Bald-looking white crown and a green eye-stripe'),
+    ('Northern Shoveler', 'dabbling', 'Huge spoon-shaped bill for sieving the pond surface'),
+    ('American Black Duck', 'dabbling', 'Dusky, wary cousin of the mallard'),
+    ('Garganey', 'dabbling', 'Summer visitor with a bold white eyebrow, crackling call'),
+    ('Falcated Duck', 'dabbling', 'Drooping sickle-shaped feathers and a shaggy green mane'),
+    ('Mottled Duck', 'dabbling', 'Warm-brown Gulf coast resident that never migrates'),
+    ('Gray Teal', 'dabbling', 'Plain, hardy Australasian teal, found on any water going'),
+    ('Pacific Black Duck', 'dabbling', 'Common Australasian duck with striped face'),
+    ('Cape Teal', 'dabbling', 'Pale pink-billed African teal of shallow salt pans'),
+    ('Chestnut Teal', 'dabbling', 'Glossy green head and deep chestnut body, Australian'),
+    ('Marbled Teal', 'dabbling', 'Soft pale-brown, spotted duck of Mediterranean wetlands'),
+    ('Laysan Duck', 'dabbling', 'One of the rarest ducks, a small island dabbler'),
+    ('Hawaiian Duck', 'dabbling', 'The koloa, a mottled brown native of Hawaiian streams'),
+    ('Yellow-billed Duck', 'dabbling', 'Bright yellow bill, widespread across southern Africa'),
+    ('Spot-billed Duck', 'dabbling', 'Yellow-tipped bill and a red spot at its base'),
+    ('Canvasback', 'diving', 'Sloping profile and a rust-red head, fast flier'),
+    ('Redhead', 'diving', 'Round copper head, dives for pondweed'),
+    ('Ring-necked Duck', 'diving', 'Faint chestnut collar, peaked head, dives in lakes'),
+    ('Greater Scaup', 'diving', 'Large bay duck with a bright blue bill'),
+    ('Lesser Scaup', 'diving', 'Purple-glossed head, dives in flocks on open water'),
+    ('Tufted Duck', 'diving', 'Black duck with a floppy crest and gold eyes'),
+    ('Common Pochard', 'diving', 'Chestnut head, grey back, dives for plants'),
+    ('Ferruginous Duck', 'diving', 'Deep chestnut with a white eye, shy reedbed diver'),
+    ('Southern Pochard', 'diving', 'Dark diving duck of South American lakes'),
+    ('Common Goldeneye', 'diving', 'Golden eye, whistling wingbeats, nests in tree holes'),
+    ('Barrow''s Goldeneye', 'diving', 'Crescent face patch and a purple head'),
+    ('Bufflehead', 'diving', 'Tiny, big-headed diver with a white bonnet'),
+    ('Hooded Merganser', 'diving', 'Fan-shaped crest it can raise and flatten'),
+    ('Common Merganser', 'diving', 'Long saw-edged bill for catching fish underwater'),
+    ('Red-breasted Merganser', 'diving', 'Shaggy double-crested diver with a thin red bill'),
+    ('Smew', 'diving', 'White ''panda'' mergansers that winter on frozen lakes'),
+    ('Ruddy Duck', 'diving', 'Stiff cocked tail and a bright blue bill, dives to feed'),
+    ('Common Eider', 'sea', 'Largest European duck, supplier of eiderdown'),
+    ('King Eider', 'sea', 'Orange knob on its bill and a pastel-blue crown'),
+    ('Spectacled Eider', 'sea', 'Goggle-like white eye patches, Arctic sea duck'),
+    ('Steller''s Eider', 'sea', 'Smallest eider, with a tidy black spot on the side'),
+    ('Long-tailed Duck', 'sea', 'Streaming tail, dives deeper than most ducks'),
+    ('Harlequin Duck', 'sea', 'Painted slate-blue duck that rides white-water torrents'),
+    ('Surf Scoter', 'sea', 'Clownish orange-and-white bill and white nape patch'),
+    ('White-winged Scoter', 'sea', 'Black sea duck with a white wing flash'),
+    ('Black Scoter', 'sea', 'All-black drake with a bright orange knob'),
+    ('Velvet Scoter', 'sea', 'Large dark sea duck, white wing patches, winters at sea'),
+    ('Common Scoter', 'sea', 'Black sea duck that rafts in huge winter flocks'),
+    ('Wood Duck', 'perching', 'Painted crest and red eye, nests high in trees'),
+    ('Mandarin Duck', 'perching', 'Ornate orange ''sail'' feathers, from east Asia'),
+    ('Muscovy Duck', 'perching', 'Red-faced, claw-footed tree-nester from Central and South America'),
+    ('Comb Duck', 'perching', 'Fleshy comb on the bill; perches in trees and wades'),
+    ('Maned Duck', 'perching', 'Australian wood duck that grazes on grass'),
+    ('Brazilian Teal', 'perching', 'Tiny, bright-billed perching teal from South America'),
+    ('Hartlaub''s Duck', 'perching', 'Dark duck of African forest streams'),
+    ('Fulvous Whistling Duck', 'perching', 'Long-legged and tawny, whistles in flight'),
+    ('White-faced Whistling Duck', 'perching', 'Gregarious tree-duck with a pale face'),
+    ('Black-bellied Whistling Duck', 'perching', 'Pink bill, long legs, perches on posts and branches')
+) AS species(name, category, description);
 
 CREATE OR REPLACE TABLE inventory (
     product_id BIGINT PRIMARY KEY REFERENCES products(product_id),

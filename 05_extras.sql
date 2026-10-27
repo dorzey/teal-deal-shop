@@ -12,10 +12,10 @@ INSTALL fts; LOAD fts;
 
 PRAGMA create_fts_index('products', 'product_id', 'name', 'description', overwrite = 1);
 
--- "waterproof pond ducks", ranked by BM25
+-- "ducks that dive", ranked by BM25
 SELECT * FROM (
     SELECT product_id, name,
-           fts_main_products.match_bm25(product_id, 'waterproof pond') AS score
+           fts_main_products.match_bm25(product_id, 'dives') AS score
     FROM products
 ) WHERE score IS NOT NULL
 ORDER BY score DESC
