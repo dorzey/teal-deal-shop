@@ -189,7 +189,8 @@ async function bootQuack() {
     quackConn = await db.connect();
     await quackConn.query(`INSTALL quack`);
     await quackConn.query(`LOAD quack`);
-    await quackConn.query(`ATTACH 'quack:localhost:8789' AS remote (TOKEN 'teal-deal-demo-token')`);
+    const cfg = await (await fetch('/config')).json();   // where the collector's quack endpoint is, from the page's point of view
+    await quackConn.query(`ATTACH '${cfg.quack_url}' AS remote (TOKEN '${cfg.quack_token}')`);
     hasQuack = true;
   } catch (e) {
     console.warn('quack unavailable — funnel/retention/daily will stay in their waiting state', e);

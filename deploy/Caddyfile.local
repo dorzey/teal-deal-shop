@@ -1,0 +1,29 @@
+# Local spike of the public deployment: TLS in front of the collector.
+#
+#   docker run -d --name teal-deal-caddy --network host \
+#     -v $PWD/deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro caddy:2
+#   TEAL_DEAL_PUBLIC=1 TEAL_DEAL_QUACK_URL=quack:teal-deal.test:8444 uv run collector.py
+#   chromium --host-resolver-rules="MAP teal-deal.test 127.0.0.1" \
+#            --ignore-certificate-errors https://teal-deal.test:8443/dashboard.html
+#
+# `tls internal` uses Caddy's own CA, hence the browser flag; a real deployment
+# drops local_certs/tls internal and lets Caddy get a Let's Encrypt cert.
+{
+	local_certs
+	skip_install_trust
+	auto_https disable_redirects
+	admin off
+}
+
+teal-deal.test:8443 {
+	tls internal
+	reverse_proxy 127.0.0.1:8787
+}
+
+# quack: the server only accepts localhost Host headers, so rewrite it
+teal-deal.test:8444 {
+	tls internal
+	reverse_proxy [::1]:8789 {
+		header_up Host localhost:8789
+	}
+}

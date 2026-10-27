@@ -52,6 +52,14 @@ QUACK_TOKEN    = "teal-deal-demo-token"
 QUACK_LAKE_PORT = 8789
 QUACK_OLTP_PORT = 8790
 
+# Public mode (TEAL_DEAL_PUBLIC=1): for running behind a TLS proxy on the open
+# internet. The page ships the quack token, so it is public — the lake's quack
+# endpoint is made read-only instead (see _lock_down_lake()), and oltp.duckdb is
+# not served over quack at all. TEAL_DEAL_QUACK_URL is what the dashboard attaches
+# to (the proxy's public address); /config hands it to the browser.
+PUBLIC_MODE    = os.environ.get("TEAL_DEAL_PUBLIC") == "1"
+QUACK_PUBLIC_URL = os.environ.get("TEAL_DEAL_QUACK_URL", f"quack:localhost:{QUACK_LAKE_PORT}")
+
 # ---- the single writer, twice over: oltp.duckdb and the DuckLake catalog ---
 # Each file only allows one connection to hold it — DuckDB's single-writer
 # model. The DuckLake connection additionally calls quack_serve(): a second
@@ -78,17 +86,18 @@ def _oltp():
     if _oltp_con is None:
         con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
         _oltp_con = con
-        try:
-            con.execute("INSTALL quack")
-            con.execute("LOAD quack")
-            con.execute(
-                f"SELECT * FROM quack_serve('quack://localhost:{QUACK_OLTP_PORT}', "
-                f"token := '{QUACK_TOKEN}', disable_ssl := true)"
-            )
-            print(f"[collector] oltp.duckdb reachable via "
-                  f"quack:localhost:{QUACK_OLTP_PORT} (token {QUACK_TOKEN})", flush=True)
-        except Exception as e:
-            print(f"[collector] quack unavailable for oltp.duckdb: {e}", file=sys.stderr)
+        if not PUBLIC_MODE:
+            try:
+                con.execute("INSTALL quack")
+                con.execute("LOAD quack")
+                con.execute(
+                    f"SELECT * FROM quack_serve('quack://localhost:{QUACK_OLTP_PORT}', "
+                    f"token := '{QUACK_TOKEN}', disable_ssl := true)"
+                )
+                print(f"[collector] oltp.duckdb reachable via "
+                      f"quack:localhost:{QUACK_OLTP_PORT} (token {QUACK_TOKEN})", flush=True)
+            except Exception as e:
+                print(f"[collector] quack unavailable for oltp.duckdb: {e}", file=sys.stderr)
         try:
             _setup_hybrid(con)
             _has_hybrid = True
@@ -114,10 +123,32 @@ def _lake():
             )
             print(f"[collector] the DuckLake catalog reachable via "
                   f"quack:localhost:{QUACK_LAKE_PORT} (token {QUACK_TOKEN})", flush=True)
+            if PUBLIC_MODE:
+                _lock_down_lake(con)
         except Exception as e:
             print(f"[collector] quack unavailable for the DuckLake catalog: {e}", file=sys.stderr)
         _lake_con = con
     return _lake_con
+
+def _lock_down_lake(con):
+    """Make the lake's quack endpoint safe to publish: read queries only, and no
+    filesystem access beyond the lake's own data files.
+
+    quack calls `quack_authorization_function(session, query)` on every query,
+    including the catalog queries ATTACH itself sends (WITH/SELECT/BEGIN/COMMIT…),
+    so this is an allowlist of statement types plus a deny-list of write and
+    file-reading keywords (which also catches `WITH x AS (DELETE …)`). Crude —
+    a keyword inside a string literal is refused too — but fine for a demo.
+    enable_external_access=false must come after quack_serve (quack needs its
+    crypto module at start) and allowed_directories keeps the DuckLake data
+    path readable for the collector's own inserts and compaction."""
+    con.execute(r"""CREATE OR REPLACE MACRO quack_read_only(sid, q) AS
+        regexp_matches(q, '^\s*(?i:select|with|from|begin|commit|rollback|abort|start|end|show|describe|summarize|explain)\b')
+        AND NOT regexp_matches(q, '(?i)\b(insert|update|delete|drop|create|alter|copy|attach|detach|install|load|truncate|merge|export|import|vacuum|checkpoint|set|reset|call|pragma|read_csv|read_text|read_blob|read_parquet|read_json|glob)\b')""")
+    con.execute("SET quack_authorization_function = 'quack_read_only'")
+    con.execute("SET allowed_directories = ['lakehouse_data/']")
+    con.execute("SET enable_external_access = false")
+    print("[collector] public mode: lake quack endpoint is read-only", flush=True)
 
 def _setup_hybrid(con):
     """One-time build of the hybrid recommender's two signals: a real text
@@ -410,6 +441,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(200, {"product_ids": get_hybrid_recommendations(ids)})
             except Exception as e:
                 self._json(400, {"error": str(e)})
+        elif path == "/config":
+            self._json(200, {"quack_url": QUACK_PUBLIC_URL, "quack_token": QUACK_TOKEN})
         elif path == "/dashboard-data":
             try:
                 self._json(200, get_dashboard())
