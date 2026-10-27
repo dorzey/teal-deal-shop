@@ -45,6 +45,9 @@ JOIN inventory   inv USING (product_id)
 WHERE o.order_id = currval('order_seq')
 ORDER BY oi.product_id;
 
+-- ---- The trigger on inventory (see 01_seed.sql) logged both decrements -----
+SELECT product_id, old_stock, new_stock FROM stock_audit ORDER BY changed_at, product_id;
+
 -- ---- The oversell case ------------------------------------------------------
 -- Uncomment to watch the CHECK fire and abort the transaction:
 --

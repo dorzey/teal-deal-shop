@@ -121,6 +121,9 @@
   .empty b{color:var(--ink);font-family:'Fredoka',sans-serif}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
+<script type="importmap">
+{ "imports": { "apache-arrow": "https://cdn.jsdelivr.net/npm/apache-arrow@17.0.0/+esm" } }
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -155,32 +158,33 @@ const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximum
 // ---- funnel/retention/daily, live via Quack (DuckDB-WASM attaches straight to
 // collector.py's DuckLake connection over HTTP, no /dashboard-data round-trip)
 // -------------------------------------------------------------------------------
-// revenue_by_category/totals stay on /dashboard-data below: they need
-// oltp.duckdb, and every real table there has a FOREIGN KEY, which this
-// beta release of quack makes invisible to remote clients. The lake's
-// `events` table has no FK, so it works. Dynamic import() (not a <script
-// type="module">) so this doesn't change how the rest of this classic
-// script executes. No fallback: collector.py's get_dashboard() doesn't
-// compute funnel/retention/daily at all, so if this fails, those cards
-// just show a waiting/empty state instead of stale or re-fetched data.
+// revenue_by_category/totals stay on /dashboard-data below. Dynamic import()
+// (not a <script type="module">) so this doesn't change how the rest of this
+// classic script executes. No fallback: collector.py's get_dashboard() doesn't
+// compute funnel/retention/daily at all, so if this fails, those cards just
+// show a waiting/empty state instead of stale or re-fetched data.
 //
-// Pinned newer than index.html's duckdb-wasm@1.29.0 — 1.29.0 can
-// INSTALL/LOAD the quack extension (its functions work) but doesn't have
-// quack's ATTACH/storage support ("Unrecognized storage type"); this exact
-// dev build does. Pinned rather than @latest so this doesn't silently
-// break if a newer build changes something.
+// Uses Query Farm's Haybarn build of DuckDB-Wasm (@haybarn/haybarn-wasm), the
+// first published wasm build on the DuckDB 2.0 engine whose quack extension can
+// ATTACH to a 2.0 server; @duckdb/duckdb-wasm is still on 1.5.x here and
+// speaks an older quack protocol. Only the threaded variant works: quack needs
+// real threads, which needs a cross-origin-isolated page, so collector.py
+// serves this page with COOP/COEP headers. index.html stays on
+// @duckdb/duckdb-wasm@1.29.0 — it only reads the static catalog.parquet.
+// Pinned to an exact rc rather than @latest so a new build can't silently
+// change anything.
+const HAYBARN = 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc7/dist';
 let hasQuack = false, quackConn = null;
 
 async function bootQuack() {
   try {
-    const duckdb = await import('https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.33.1-dev57.0/+esm');
-    const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+    const duckdb = await import(`${HAYBARN}/duckdb-browser.mjs`);
     const workerUrl = URL.createObjectURL(
-      new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+      new Blob([`importScripts("${HAYBARN}/duckdb-browser-threads.worker.js");`], { type: 'text/javascript' })
     );
     const worker = new Worker(workerUrl);
     const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
-    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+    await db.instantiate(`${HAYBARN}/duckdb-threads.wasm`, `${HAYBARN}/duckdb-browser-threads.pthread.worker.js`);
     URL.revokeObjectURL(workerUrl);
     quackConn = await db.connect();
     await quackConn.query(`INSTALL quack`);

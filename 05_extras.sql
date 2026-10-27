@@ -13,10 +13,11 @@ INSTALL fts; LOAD fts;
 PRAGMA create_fts_index('products', 'product_id', 'name', 'description', overwrite = 1);
 
 -- "waterproof pond ducks", ranked by BM25
-SELECT product_id, name,
-       fts_main_products.match_bm25(product_id, 'waterproof pond') AS score
-FROM products
-WHERE score IS NOT NULL
+SELECT * FROM (
+    SELECT product_id, name,
+           fts_main_products.match_bm25(product_id, 'waterproof pond') AS score
+    FROM products
+) WHERE score IS NOT NULL
 ORDER BY score DESC
 LIMIT 5;
 
@@ -58,21 +59,22 @@ DROP TABLE _buckets;
 
 CREATE INDEX IF NOT EXISTS pv_hnsw ON product_vectors USING HNSW (embedding);
 
--- Nearest neighbours to product 3 (excludes itself).
--- Tip: to actually exercise the HNSW index, pass a literal FLOAT[16] into
--- array_distance with ORDER BY ... LIMIT; a subquery vector falls back to exact.
-WITH q AS (SELECT embedding AS qe FROM product_vectors WHERE product_id = 3)
+-- Nearest neighbours to product 3 (excludes itself), via DuckDB 2.0's
+-- NEAREST join: each left row is matched with its k closest right rows.
+-- (Use APPROX NEAREST to let it use the HNSW index.)
 SELECT v.product_id, p.name, p.category,
-       array_distance(v.embedding, q.qe) AS dist
-FROM product_vectors v
-CROSS JOIN q
-JOIN products p USING (product_id)
-WHERE v.product_id <> 3
+       array_distance(v.embedding, q.embedding) AS dist
+FROM product_vectors q
+JOIN product_vectors v NEAREST 6 BY DISTANCE array_distance(q.embedding, v.embedding)
+JOIN products p ON p.product_id = v.product_id
+WHERE q.product_id = 3 AND v.product_id <> 3
 ORDER BY dist
 LIMIT 5;
 
 -- ---- C. Co-purchase graph traversal (DuckPGQ) ------------------------------
 INSTALL duckpgq FROM community; LOAD duckpgq;
+-- DuckDB 2.0 needs an explicit opt-in to the DuckPGQ grammar after loading.
+SET active_grammar_extensions = ['duckpgq'];
 
 -- Edges: products bought together in the same order, weighted by frequency.
 CREATE OR REPLACE TABLE copurchase AS

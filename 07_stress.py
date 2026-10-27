@@ -45,17 +45,15 @@ def worker(worker_id, stop_event, counter, lock, errors):
     while not stop_event.is_set():
         now = dt.datetime.now()
         try:
+            # Inlined literals, not `?` parameters: DuckDB 2.0's quack pushdown
+            # forwards the INSERT without the bound values ("Values were not
+            # provided for the following parameters"). Every value is
+            # generated here, so there is nothing to escape.
+            props = json.dumps({"stress": True, "worker": worker_id})
             con.execute(
-                "INSERT INTO remote.events VALUES (?,?,?,?,?,?,?)",
-                [
-                    base_id + n,
-                    random.randint(1, 500),  # real seeded user_id range, so oltp.users joins still work
-                    random.choice(EVENT_TYPES),
-                    random.randint(1, 60),   # real seeded product_id range
-                    now,
-                    now.date(),
-                    json.dumps({"stress": True, "worker": worker_id}),
-                ],
+                f"INSERT INTO remote.events VALUES ({base_id + n}, {random.randint(1, 500)}, "
+                f"'{random.choice(EVENT_TYPES)}', {random.randint(1, 60)}, "
+                f"TIMESTAMP '{now.isoformat(sep=' ')}', DATE '{now.date()}', '{props}')"
             )
             n += 1
             with lock:

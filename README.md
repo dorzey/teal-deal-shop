@@ -41,10 +41,13 @@ safe — it stops whatever server a previous run left up before rebuilding, so
 you never get a "port already in use" error.
 
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
-`pip install duckdb==1.5.4` for `collector.py`. That version is pinned because
-the community `duckpgq` extension (used for hybrid recommendations, see below)
-lags behind `pip`'s latest DuckDB release — a newer pip version just means
-that one feature degrades gracefully rather than breaking the app. Also needs
+[`uv`](https://docs.astral.sh/uv/) — `run.sh` calls `uv sync` itself, which
+installs the pinned `duckdb==2.0.0` into `.venv` for `collector.py`. The CLI
+must be 2.0.x too (`curl https://install.duckdb.org | bash`); 2.0 database
+files can't be read by older versions. The community `duckpgq` extension (hybrid recommendations, see below) needs
+`SET active_grammar_extensions = ['duckpgq']` after `LOAD` on 2.0 — the scripts
+do this; if the extension is unavailable that one feature degrades gracefully
+rather than breaking the app. Also needs
 network: the DuckLake catalog (`03_lake.sql`) requires it on first run to
 install the `ducklake` extension (cached after that) — that's a core
 dependency, not an optional tier. `05_extras.sql` (fts/vss/spatial/DuckPGQ),
@@ -113,12 +116,10 @@ duckdb -c "
 "
 ```
 
-`oltp.duckdb` is not quack-served: every real table there has a `FOREIGN KEY`,
-and this beta release of quack makes FK-constrained tables invisible to
-remote clients (`PRIMARY KEY` and `CHECK` are fine, `REFERENCES` is not).
-Real constraints are the entire point of that tier, so they stay, and
-`oltp.duckdb` keeps its single-writer limitation — one process, every write
-funneled through it.
+`oltp.duckdb` is quack-served too, on port 8790 (same token). Every table
+there has a `FOREIGN KEY`, which quack's beta couldn't expose; 2.0 can. Remote
+writes still funnel through `collector.py`'s one connection, so the
+single-writer limit stands.
 
 `public/dashboard.html` is the more interesting client: its
 funnel/retention/daily-activity charts are computed by DuckDB-WASM running
@@ -127,19 +128,24 @@ connection over quack — the same thesis as the storefront's in-browser
 search, against a live server instead of a static Parquet export. These
 three charts are quack-only, with no `/dashboard-data` fallback:
 `get_dashboard()` only computes `revenue_by_category`/`totals` (the numbers
-that need `oltp.duckdb`, which isn't quack-reachable). Until the in-browser
+that need `oltp.duckdb`; the dashboard doesn't attach to it yet). Until the in-browser
 connection finishes instantiating, or if a live query fails, those three
 cards show a "waiting for the live Quack connection…" placeholder instead of
-stale or re-fetched data. Needs `duckdb-wasm@1.33.1-dev57.0` specifically,
-not the storefront's pinned `1.29.0` — that build can `INSTALL`/`LOAD` the
-quack extension but doesn't have its `ATTACH`/storage support yet.
+stale or re-fetched data. Uses Query Farm's Haybarn build,
+`@haybarn/haybarn-wasm@2.0.0-rc7` (from jsDelivr): the first published wasm build
+on the DuckDB 2.0 engine whose quack extension can `ATTACH` to a 2.0 server —
+`@duckdb/duckdb-wasm` is still 1.5.x and speaks an older quack protocol. Only the
+threaded variant works (quack needs real threads), so the collector serves
+`dashboard.html` with `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: credentialless`. The storefront stays on the
+pinned `duckdb-wasm@1.29.0`, which only reads the static `catalog.parquet`.
 
 **Concurrent writers (`07_stress.py`).** N threads, each with its own quack
 connection, `INSERT` into the live DuckLake catalog at once — a real exercise
 of Quack's "multiple concurrent writers" claim:
 
 ```bash
-python3 07_stress.py --workers 8 --duration 10
+uv run 07_stress.py --workers 8 --duration 10
 ```
 
 Writes use real event types (weighted like real traffic — mostly pageviews)
@@ -157,9 +163,8 @@ serialized waiting.
 `03_lake.sql` already landed: `ducklake_snapshots`, `AT (VERSION => n)` /
 `AT (TIMESTAMP => …)` time travel, and a change feed via
 `ducklake_table_changes`, replaying the funnel as of an earlier snapshot.
-Needs the file directly (stop `collector.py` first) — DuckLake's
-time-travel/snapshot functions don't work through a quack attachment yet,
-even though plain reads/writes do.
+Needs the file directly (stop `collector.py` first) — `ducklake_snapshots()`
+doesn't work through a quack attachment, though `AT (VERSION => n)` does.
 
 **`04_marts.sql` — downstream analytics (home turf).** `ATTACH`es the OLTP store
 read-only and reads the lake in the same queries. Sessionization via window
@@ -199,14 +204,11 @@ decays instead of sitting flat.
 
 - **`oltp.duckdb` allows only one writer.** DuckDB's single-writer model
   means every order and every stock decrement funnels through
-  `collector.py`'s one connection. Quack doesn't help here today — its beta
-  release makes any table with a `FOREIGN KEY` invisible to remote clients,
-  and every real table in `oltp.duckdb` has one.
-- **DuckLake time travel doesn't work over quack.** `AT (VERSION => n)` and
-  `ducklake_snapshots()` both fail against a quack-attached table, even
-  though plain reads/writes to that table work fine. Matches the DuckDB
-  team's own stated roadmap (DuckLake as a quack-servable catalog is
-  planned, not shipped) — `06_ducklake.sql` needs the file directly.
+  `collector.py`'s one connection. Quack (port 8790) gives remote clients
+  access, but they're still served by that one process.
+- **`ducklake_snapshots()` doesn't work over quack.** `AT (VERSION => n)`
+  does; the snapshot-listing function needs the file directly
+  (`06_ducklake.sql`).
 - Backing the DuckLake catalog with Postgres instead of a local file would
-  give real concurrent multi-process reads/writes to both `oltp.duckdb` and
-  time-travel queries — the two things quack doesn't cover yet.
+  give real concurrent multi-process reads/writes without funneling through
+  one process.

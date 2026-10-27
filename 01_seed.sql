@@ -122,6 +122,21 @@ WHERE o.order_id % 3 <> 0                             -- ~2/3 get a third item
   AND ((o.order_id * 11 + 41) % 60) + 1 <> ((o.order_id * 3 + 7) % 60) + 1   -- avoid clash with item 1
   AND ((o.order_id * 11 + 41) % 60) + 1 <> ((o.order_id * 7 + 29) % 60) + 1; -- avoid clash with item 2
 
+-- ---- Stock audit trail (DuckDB 2.0 trigger) ---------------------------------
+-- Every UPDATE on inventory writes one audit row per changed product. Created
+-- after the seed so the bulk load above isn't audited.
+CREATE OR REPLACE TABLE stock_audit (
+    product_id BIGINT,
+    old_stock  INTEGER,
+    new_stock  INTEGER,
+    changed_at TIMESTAMP DEFAULT now()
+);
+CREATE TRIGGER trg_stock_audit AFTER UPDATE ON inventory
+    REFERENCING OLD TABLE AS o NEW TABLE AS n
+    FOR EACH STATEMENT
+        INSERT INTO stock_audit (product_id, old_stock, new_stock)
+        SELECT n.product_id, o.stock, n.stock FROM o JOIN n USING (product_id);
+
 SELECT 'seed complete' AS status,
        (SELECT count(*) FROM users)       AS users,
        (SELECT count(*) FROM products)    AS products,

@@ -9,6 +9,9 @@ set -euo pipefail
 DUCKDB="${DUCKDB:-duckdb}"
 cd "$(dirname "$0")"
 
+echo "==> uv sync (Python deps, pinned duckdb==2.0.0)"
+uv sync
+
 echo "==> reset"
 pkill -INT -f "python3 collector.py" 2>/dev/null || true   # SIGINT so it flushes + closes cleanly, like Ctrl-C
 rm -f oltp.duckdb marts.duckdb puddle_catalog.ducklake
@@ -55,4 +58,4 @@ Built: oltp.duckdb, marts.duckdb, puddle_catalog.ducklake (+ lakehouse_data/), p
     Ctrl-C to stop (flushes cleanly on exit)
 EOF
 
-exec python3 collector.py
+exec uv run collector.py

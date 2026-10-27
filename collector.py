@@ -7,9 +7,7 @@ DuckLake catalog (see _oltp()/_lake()). The DuckLake connection is also
 served over Quack (DuckDB's own HTTP client-server protocol): another
 process can ATTACH to it over the network and read/write events while this
 one keeps running, instead of needing the file directly. oltp.duckdb is
-not quack-served — every real table there has a FOREIGN KEY, and this beta
-release of quack makes FK tables invisible to remote clients (see the
-comment above _oltp()/_lake()).
+served the same way, on its own port (see the comment above _oltp()/_lake()).
 
   • serves the storefront from ./public  (so the tracker posts same-origin)
   • accepts POST /collect events and appends them to the DuckLake catalog,
@@ -52,6 +50,7 @@ DUCKLAKE_DB      = os.path.splitext(DUCKLAKE_CATALOG)[0]
 # auth today. A real deployment would generate + guard this properly.
 QUACK_TOKEN    = "puddle-demo-token"
 QUACK_LAKE_PORT = 8789
+QUACK_OLTP_PORT = 8790
 
 # ---- the single writer, twice over: oltp.duckdb and the DuckLake catalog ---
 # Each file only allows one connection to hold it — DuckDB's single-writer
@@ -59,14 +58,11 @@ QUACK_LAKE_PORT = 8789
 # process can ATTACH to it over the network and read/write events while
 # this process is running, instead of needing the file directly.
 #
-# oltp.duckdb does not get the same treatment: this beta release of quack
-# makes any table with a FOREIGN KEY invisible to remote clients (PRIMARY
-# KEY and CHECK are fine; REFERENCES is not), and every real table in
-# oltp.duckdb has one — real constraints are the entire point of the OLTP
-# tier, so they stay, and oltp.duckdb's single-writer limitation stands
-# (see README). DuckLake time travel (`AT (VERSION => n)`,
-# ducklake_snapshots) also doesn't work through a quack attachment yet, so
-# 06_ducklake.sql needs the file directly regardless.
+# oltp.duckdb is served too, on its own port: remote writes still funnel
+# through this one process, so its single-writer limit stands (see README).
+# DuckLake time travel (`AT (VERSION => n)`) works through the quack
+# attachment; ducklake_snapshots() does not, so 06_ducklake.sql still needs
+# the file directly.
 #
 # oltp and the lake are two separate connections because a quack server
 # only exposes its own PRIMARY database to clients — the lake connection
@@ -82,6 +78,17 @@ def _oltp():
     if _oltp_con is None:
         con = duckdb.connect(os.path.join(ROOT, "oltp.duckdb"))
         _oltp_con = con
+        try:
+            con.execute("INSTALL quack")
+            con.execute("LOAD quack")
+            con.execute(
+                f"SELECT * FROM quack_serve('quack://localhost:{QUACK_OLTP_PORT}', "
+                f"token := '{QUACK_TOKEN}', disable_ssl := true)"
+            )
+            print(f"[collector] oltp.duckdb reachable via "
+                  f"quack:localhost:{QUACK_OLTP_PORT} (token {QUACK_TOKEN})", flush=True)
+        except Exception as e:
+            print(f"[collector] quack unavailable for oltp.duckdb: {e}", file=sys.stderr)
         try:
             _setup_hybrid(con)
             _has_hybrid = True
@@ -123,6 +130,7 @@ def _setup_hybrid(con):
     con.execute("INSTALL duckpgq FROM community")
     con.execute("LOAD vss")
     con.execute("LOAD duckpgq")
+    con.execute("SET active_grammar_extensions = ['duckpgq']")  # DuckDB 2.0 opt-in
     con.execute("""
         CREATE OR REPLACE TABLE _tokens AS
         SELECT product_id, unnest(string_split(
@@ -329,7 +337,8 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
             ),
             similarity_hits AS (
                 SELECT v2.product_id, -min(array_distance(v1.embedding, v2.embedding)) AS score, 1 AS tier
-                FROM product_vectors v1, product_vectors v2
+                FROM product_vectors v1
+                JOIN product_vectors v2 NEAREST 20 BY DISTANCE array_distance(v1.embedding, v2.embedding)
                 WHERE v1.product_id IN ({ids})
                   AND v2.product_id NOT IN ({ids})
                   AND v2.product_id NOT IN (SELECT product_id FROM graph_hits)
@@ -342,8 +351,8 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
 
 def get_dashboard():
     """revenue_by_category + totals — the dashboard numbers that need
-    oltp.duckdb (FK-constrained tables, not quack-reachable — see
-    _oltp()/_lake()). public/dashboard.html gets funnel/retention/daily
+    oltp.duckdb (served over quack, but the dashboard doesn't attach to it
+    yet — see _oltp()/_lake()). public/dashboard.html gets funnel/retention/daily
     directly via quack instead; see its queryLakeStats()."""
     con = _oltp()
     with _oltp_lock:
@@ -375,6 +384,15 @@ def get_dashboard():
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=PUBLIC, **k)
+
+    def end_headers(self):
+        # The dashboard's in-browser DuckDB needs threads (for quack), which
+        # needs a cross-origin-isolated page. `credentialless` rather than
+        # `require-corp` so its CDN scripts still load without CORP headers.
+        if urlparse(self.path).path == "/dashboard.html":
+            self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+            self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
+        super().end_headers()
 
     def do_GET(self):
         path = urlparse(self.path).path
