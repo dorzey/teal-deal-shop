@@ -233,6 +233,24 @@
     box-shadow:var(--shadow);padding:16px;display:flex;flex-direction:column;gap:8px;
     transition:transform .15s ease, box-shadow .15s ease;
   }
+  /* Skeleton cards: static markup in #grid, painted with the HTML while DuckDB
+     boots, then replaced wholesale by the first real render. Same box as .card. */
+  .card.skel{pointer-events:none}
+  .skel .sk{
+    display:block;height:12px;border-radius:6px;
+    background:linear-gradient(90deg,var(--line) 25%,#EEF4F2 50%,var(--line) 75%);
+    background-size:200% 100%;animation:skelShimmer 1.4s ease-in-out infinite;
+  }
+  .skel .sk-cat{width:34%;height:10px}
+  .skel .sk-name{width:72%;height:17px}
+  .skel .sk-line{width:100%}
+  .skel .sk-short{width:62%}
+  .skel .sk-price{width:28%;height:19px}
+  .skel .sk-rate{width:26%}
+  .skel .sk-stock{width:38%;height:20px;border-radius:999px}
+  .skel .sk-btn{width:34%;height:30px;border-radius:10px}
+  .skel .sk-gap{flex:1}
+  @keyframes skelShimmer{from{background-position:200% 0}to{background-position:-200% 0}}
   .card:hover{transform:translateY(-3px) rotate(-.6deg);box-shadow:0 2px 4px rgba(15,33,41,.08),0 14px 30px rgba(15,33,41,.10)}
   .card .cat{
     font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.06em;
@@ -357,7 +375,20 @@
     <div id="ppContent"></div>
   </div>
 
-  <div class="grid" id="grid"></div>
+  <div class="grid" id="grid" aria-busy="true" aria-label="Loading ducks">
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+    <div class="card skel"><span class="sk sk-cat"></span><span class="sk sk-name"></span><span class="sk sk-line"></span><span class="sk sk-line sk-short"></span><span class="sk-gap"></span><div class="foot"><span class="sk sk-price"></span><span class="sk sk-rate"></span></div><div class="foot"><span class="sk sk-stock"></span><span class="sk sk-btn"></span></div></div>
+  </div>
 </div>
 
 <div class="console">
@@ -457,6 +488,7 @@ async function boot() {
   const n = (await conn.query(`SELECT count(*) AS n FROM catalog`)).toArray()[0].n;
   $('dot').className = 'dot ready';
   $('statusText').textContent = `${n} ducks bobbing · DuckDB in-browser`;
+  $('grid').removeAttribute('aria-busy');
   run();
   loadExtras();   // not awaited: the store is usable before fts/vss finish
 }
@@ -766,6 +798,8 @@ boot().catch(err => {
   $('dot').className = 'dot';
   $('statusText').textContent = 'the pond drained — see console 🦆💦';
   $('sql').textContent = String(err);
+  $('grid').removeAttribute('aria-busy');
+  $('grid').innerHTML = `<div class="empty"><b>The pond drained.</b><br>DuckDB didn't start — see the console.</div>`;
   console.error(err);
 });
 </script>
