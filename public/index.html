@@ -7,6 +7,16 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<!-- Start the in-browser DuckDB downloads at HTML parse time instead of after the
+     module script boots: the wasm, then the parquet/fts/vss extensions it
+     fetches itself, all otherwise queue up one after another. Same URLs
+     duckdb-wasm@1.29.0 (engine v1.1.1, eh build) requests, so they hit the cache. -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="preconnect" href="https://extensions.duckdb.org" crossorigin />
+<link rel="preload" as="fetch" crossorigin href="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-eh.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/fts.duckdb_extension.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/vss.duckdb_extension.wasm" />
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root{
@@ -444,6 +454,19 @@ async function boot() {
   await db.registerFileBuffer('catalog.parquet', buf);
   await conn.query(`CREATE TABLE catalog AS SELECT * FROM read_parquet('catalog.parquet')`);
 
+  const n = (await conn.query(`SELECT count(*) AS n FROM catalog`)).toArray()[0].n;
+  $('dot').className = 'dot ready';
+  $('statusText').textContent = `${n} ducks bobbing · DuckDB in-browser`;
+  run();
+  loadExtras();   // not awaited: the store is usable before fts/vss finish
+}
+
+
+// ---- fts + vss, set up in the background ----
+// Both INSTALLs download an extension and the index/embedding builds take a
+// moment, so they must not hold up the first render. Until they finish the
+// store uses ILIKE search and hides "Ducks like this" (hasFts/hasRecs).
+async function loadExtras() {
   // Full-text search (BM25), same fts block as 05_extras.sql — INSTALL/LOAD
   // fts and create_fts_index/match_bm25 all work in-browser. Falls back to
   // ILIKE substring matching if fts can't load.
@@ -486,11 +509,7 @@ async function boot() {
     await conn.query(`DROP TABLE _buckets`);
     hasRecs = true;
   } catch (e) { console.warn('vss unavailable — recommendations disabled', e); }
-
-  const n = (await conn.query(`SELECT count(*) AS n FROM catalog`)).toArray()[0].n;
-  $('dot').className = 'dot ready';
-  $('statusText').textContent = `${n} ducks bobbing · DuckDB in-browser`;
-  run();
+  if (hasFts && state.q.trim()) run();   // re-run a search typed before fts was ready
 }
 
 // ---- assemble SQL from state ----
