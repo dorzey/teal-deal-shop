@@ -5,6 +5,7 @@
 # steps. Ctrl-C stops it (it flushes cleanly on exit). Re-running ./run.sh
 # stops any server left over from a previous run first, so it's always safe
 # to just run it again.
+# ./run.sh --build-only  builds everything and exits without serving.
 set -euo pipefail
 DUCKDB="${DUCKDB:-duckdb}"
 cd "$(dirname "$0")"
@@ -48,9 +49,11 @@ if ! "$DUCKDB" -f 06_ducklake.sql; then
   echo "    06_ducklake.sql failed (likely no network/extension access) — continuing without it"
 fi
 
-cat <<EOF
+echo
+echo "Built: oltp.duckdb, marts.duckdb, teal_deal_catalog.ducklake (+ lakehouse_data/), public/catalog.parquet"
+if [ "${1:-}" = "--build-only" ]; then exit 0; fi
 
-Built: oltp.duckdb, marts.duckdb, teal_deal_catalog.ducklake (+ lakehouse_data/), public/catalog.parquet
+cat <<EOF
 
 ==> starting the live storefront + tracking + Duck HQ dashboard
         http://localhost:8787/                  storefront

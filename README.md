@@ -41,6 +41,23 @@ Ctrl-C stops it (flushes cleanly on exit). Re-running `./run.sh` is always
 safe — it stops whatever server a previous run left up before rebuilding, so
 you never get a "port already in use" error.
 
+A `Makefile` wraps the common tasks (`make help` lists them):
+
+```bash
+make run        # same as ./run.sh
+make build      # rebuild the data, don't serve        (./run.sh --build-only)
+make serve      # serve what's already built
+make public     # serve behind a local TLS proxy with the lake's quack endpoint read-only
+make browser    # open the public-mode dashboard in a throwaway browser profile
+make check      # confirm the public quack endpoint refuses writes
+make stop       # stop the collector, proxy and throwaway browser
+```
+
+`make public` is the local rehearsal of a public deployment: Caddy (in Docker,
+Linux only for now, see `deploy/Caddyfile.local`) terminates TLS for
+`teal-deal.test`, and `TEAL_DEAL_PUBLIC=1` makes the collector refuse every quack
+write and file read, so the page's quack token being public is harmless.
+
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
 [`uv`](https://docs.astral.sh/uv/) — `run.sh` calls `uv sync` itself, which
 installs the pinned `duckdb==2.0.0` into `.venv` for `collector.py`. The CLI
