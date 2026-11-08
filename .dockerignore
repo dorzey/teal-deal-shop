@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.duckdb
+*.duckdb.wal
+*.ducklake
+*.ducklake.wal
+lakehouse_data
+public/catalog.parquet

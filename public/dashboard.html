@@ -171,9 +171,12 @@ const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximum
 // real threads, which needs a cross-origin-isolated page, so collector.py
 // serves this page with COOP/COEP headers. index.html stays on
 // @duckdb/duckdb-wasm@1.29.0 — it only reads the static catalog.parquet.
-// Pinned to an exact rc rather than @latest so a new build can't silently
-// change anything.
-const HAYBARN = 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc7/dist';
+// Pinned to an exact rc rather than @latest. Caveat: the quack extension itself is
+// fetched from Haybarn's repository at a fixed v2.0.0 path that they replace in
+// place, so a pin can stop matching it (rc7 did, after 2026-10-30; rc12 matches).
+// If the dashboard shows "waiting for the live Quack connection…" with an
+// extension "could not be loaded" warning in the console, bump this.
+const HAYBARN = 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc12/dist';
 let hasQuack = false, quackConn = null;
 
 async function bootQuack() {

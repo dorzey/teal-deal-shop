@@ -1,0 +1,25 @@
+# Local rehearsal of the public deployment: the app plus a TLS proxy in front.
+#   docker compose up -d --build        (or: make up)
+# Caddy shares the app's network namespace so it can reach the collector and
+# quack, which listens on loopback only. Hence the ports are published on `app`.
+name: teal-deal
+
+services:
+  app:
+    build: .
+    environment:
+      # where the dashboard's browser attaches to quack: the proxy's public address
+      TEAL_DEAL_QUACK_URL: ${TEAL_DEAL_QUACK_URL:-quack:teal-deal.test:8444}
+    ports:
+      - "8443:8443"   # site
+      - "8444:8444"   # quack (read-only)
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    network_mode: "service:app"
+    volumes:
+      - ./deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - app
+    restart: unless-stopped

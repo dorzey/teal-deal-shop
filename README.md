@@ -48,15 +48,26 @@ make run        # same as ./run.sh
 make build      # rebuild the data, don't serve        (./run.sh --build-only)
 make serve      # serve what's already built
 make public     # serve behind a local TLS proxy with the lake's quack endpoint read-only
+make up         # same, but app + proxy both in containers (docker compose)
+make down       # remove the containers
 make browser    # open the public-mode dashboard in a throwaway browser profile
 make check      # confirm the public quack endpoint refuses writes
-make stop       # stop the collector, proxy and throwaway browser
+make stop       # stop the collector, containers and throwaway browser
 ```
 
-`make public` is the local rehearsal of a public deployment: Caddy (in Docker,
-Linux only for now, see `deploy/Caddyfile.local`) terminates TLS for
-`teal-deal.test`, and `TEAL_DEAL_PUBLIC=1` makes the collector refuse every quack
-write and file read, so the page's quack token being public is harmless.
+`make public` and `make up` are the local rehearsal of a public deployment.
+Caddy (see `deploy/Caddyfile.local`) terminates TLS for `teal-deal.test`, and
+`TEAL_DEAL_PUBLIC=1` makes the collector refuse every quack write and file read,
+so the page's quack token being public is harmless. `make public` runs the
+collector natively next to a Caddy container (Linux only: Docker host networking);
+`make up` runs both in containers and works anywhere Docker does.
+
+The `Dockerfile` bakes everything into the image: the pinned 2.0.0 CLI, the Python
+deps, every DuckDB extension, and the seeded data (`run.sh --build-only`), so a
+container needs no network at runtime and always starts from the seeded state.
+`make up RESET=1` recreates the app container to reset the demo. The two Docker
+ports (8443 site, 8444 quack) are published by the `app` service because Caddy
+shares its network namespace, which is how it reaches quack on loopback.
 
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
 [`uv`](https://docs.astral.sh/uv/) — `run.sh` calls `uv sync` itself, which
@@ -150,7 +161,7 @@ that need `oltp.duckdb`; the dashboard doesn't attach to it yet). Until the in-b
 connection finishes instantiating, or if a live query fails, those three
 cards show a "waiting for the live Quack connection…" placeholder instead of
 stale or re-fetched data. Uses Query Farm's Haybarn build,
-`@haybarn/haybarn-wasm@2.0.0-rc7` (from jsDelivr): the first published wasm build
+`@haybarn/haybarn-wasm@2.0.0-rc12` (from jsDelivr): the first published wasm build
 on the DuckDB 2.0 engine whose quack extension can `ATTACH` to a 2.0 server —
 `@duckdb/duckdb-wasm` is still 1.5.x and speaks an older quack protocol. Only the
 threaded variant works (quack needs real threads), so the collector serves
