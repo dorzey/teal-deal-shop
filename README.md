@@ -107,8 +107,9 @@ are the OLTP tier. "Since you brought them home" fuses embeddings with a DuckPGQ
 traversal; DuckPGQ doesn't load in Wasm, so it's a round-trip
 (`get_hybrid_recommendations()`).
 
-The collector adds `?v=<content hash>` to asset URLs in served HTML so a CDN
-can't serve stale scripts after a deploy.
+The collector serves scripts/styles/sprites at `/a/<content hash>/<name>` (cached
+a year, immutable) so a CDN can't serve stale ones after a deploy. The hash is in
+the path, not a `?v=` query, because a CDN rule may ignore query strings.
 
 **Dashboard (`public/dashboard.html`)** — funnel, retention and daily activity are
 computed by DuckDB-Wasm *in the browser*, attached over quack to the collector's

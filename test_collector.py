@@ -86,9 +86,15 @@ class CleanOrder(unittest.TestCase):
 class VersionAssets(unittest.TestCase):
     def test_local_assets_get_a_content_hash_and_others_are_untouched(self):
         out = c.version_assets('<script src="xray.js" defer></script><use href="ducks.svg#x"/><script src="https://cdn/x.js">')
-        self.assertRegex(out, r'src="xray\.js\?v=[0-9a-f]{10}"')
-        self.assertRegex(out, r'href="ducks\.svg\?v=[0-9a-f]{10}#x"')
+        self.assertRegex(out, r'src="/a/[0-9a-f]{10}/xray\.js"')
+        self.assertRegex(out, r'href="/a/[0-9a-f]{10}/ducks\.svg#x"')
         self.assertIn('src="https://cdn/x.js"', out)
+        self.assertNotIn("?v=", out)   # a CDN may ignore query strings
+
+    def test_asset_paths_only_match_known_files(self):
+        self.assertTrue(c.ASSET_PATH.match("/a/0123456789/tracker.js"))
+        for bad in ("/a/xyz/tracker.js", "/a/0123456789/../collector.py", "/a/0123456789/collector.py"):
+            self.assertIsNone(c.ASSET_PATH.match(bad))
 
 class RateLimiter(unittest.TestCase):
     def test_allows_a_burst_then_refuses_with_a_retry_hint(self):
