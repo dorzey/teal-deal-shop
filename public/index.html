@@ -119,7 +119,10 @@
   }
   .cartpanel.open{display:block}
   .cartline{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;gap:10px}
-  .cartline span:first-child{color:var(--muted)}
+  .cartline span:first-child{color:var(--muted);flex:1}
+  .cartctl{display:flex;gap:4px}
+  .cartctl button{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer;font-size:13px;line-height:1;padding:0}
+  .cartctl button:hover{border-color:var(--ink)}
   .cartempty{font-size:13px;color:var(--muted);padding:6px 0}
   .miniadd{
     font-family:'JetBrains Mono',monospace;font-size:11px;cursor:pointer;
@@ -815,7 +818,7 @@ function renderCart() {
   $('cartTotal').innerHTML = quacker(total.toFixed(2));
   $('checkoutBtn').disabled = !items.length;
   $('cartItems').innerHTML = items.length
-    ? items.map(it => `<div class="cartline"><span>${it.qty}× ${it.name}</span><span>${quacker((it.qty * it.price_eur).toFixed(2))}</span></div>`).join('')
+    ? [...cart].map(([id, it]) => `<div class="cartline"><span>${it.qty}× ${it.name}</span><span>${quacker((it.qty * it.price_eur).toFixed(2))}</span><span class="cartctl"><button class="cartdec" data-id="${id}" aria-label="One fewer ${it.name}">−</button><button class="cartdel" data-id="${id}" aria-label="Remove ${it.name}">✕</button></span></div>`).join('')
     : `<div class="cartempty">Your flock is empty. Go make some friends.</div>`;
 }
 
@@ -845,6 +848,15 @@ function clampCart() {
     showToast(`🦆 Stock changed — trimmed your flock: ${trimmed.join(', ')}`);
   }
 }
+
+$('cartItems').addEventListener('click', e => {
+  const b = e.target.closest('.cartdec, .cartdel');
+  if (!b) return;
+  const id = +b.dataset.id, it = cart.get(id);
+  if (!it) return;
+  if (b.classList.contains('cartdec') && it.qty > 1) it.qty--; else cart.delete(id);
+  renderCart();
+});
 
 function addToFlock(id, name, price) {
   const existing = cart.get(id);
