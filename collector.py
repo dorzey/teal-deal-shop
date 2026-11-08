@@ -533,16 +533,18 @@ def get_dashboard():
 # ---- HTTP: static storefront + POST /collect + POST /order + GET /recommendations
 # + GET /hybrid-recommendations + GET /dashboard-data
 
-# Static assets get ?v=<content hash> in served HTML, so a CDN/browser that
-# caches them for a year (Cloudflare did) still fetches the new file once its
-# content changes.
+# Static assets are served at /a/<content hash>/<name> in the HTML, and cached
+# for a year (the hash changes when the file does). The hash is in the *path*, not
+# a ?v= query: a CDN rule that ignores query strings (Cloudflare did) would serve
+# the stale file for the new URL.
 ASSET_RE = re.compile(r'\b(xray\.css|xray\.js|tracker\.js|ducks\.svg)(?=["#])')
+ASSET_PATH = re.compile(r'^/a/[0-9a-f]{10}/(xray\.css|xray\.js|tracker\.js|ducks\.svg)$')
 
 def version_assets(html, public=PUBLIC):
     def tag(m):
         try:
             with open(os.path.join(public, m.group(1)), "rb") as f:
-                return f"{m.group(1)}?v={hashlib.sha1(f.read()).hexdigest()[:10]}"
+                return f"/a/{hashlib.sha1(f.read()).hexdigest()[:10]}/{m.group(1)}"
         except OSError:
             return m.group(1)
     return ASSET_RE.sub(tag, html)
@@ -584,9 +586,25 @@ class Handler(SimpleHTTPRequestHandler):
         if urlparse(self.path).path == "/dashboard.html":
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
+        if getattr(self, "_immutable", False):
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         super().end_headers()
 
+    def _asset(self):
+        """/a/<hash>/tracker.js -> public/tracker.js, cacheable forever. True if rewritten."""
+        m = ASSET_PATH.match(urlparse(self.path).path)
+        if m:
+            self.path = "/" + m.group(1)
+            self._immutable = True
+        return bool(m)
+
+    def do_HEAD(self):
+        self._asset()
+        super().do_HEAD()
+
     def do_GET(self):
+        if self._asset():
+            return super().do_GET()
         path = urlparse(self.path).path
         if path in LIMITS and self._limited(path):
             return
