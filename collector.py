@@ -218,6 +218,7 @@ LIMITS = {                       # per client IP
     "/recommendations":         (60, 20),
     "/hybrid-recommendations":  (60, 20),
     "/dashboard-data":          (60, 20),    # the dashboard polls every 4 s per tab
+    "/stock":                   (60, 20),    # the storefront polls every 4 s per tab
 }
 GLOBAL_LIMITS = {                # across all clients: bounds lake growth / stock drain
     "/collect": (1200, 200),
@@ -399,6 +400,14 @@ def place_order(user_id, items):
             con.execute("ROLLBACK")
             raise
         return order_id
+
+def get_stock():
+    """Live inventory: {product_id: stock}. catalog.parquet deliberately has no
+    stock column, so the storefront polls this instead."""
+    con = _oltp()
+    with _oltp_lock:
+        rows = con.execute("SELECT product_id, stock FROM inventory").fetchall()
+    return {str(pid): stock for pid, stock in rows}
 
 def get_recommendations(user_id, limit=6):
     """"Shoppers like you also got" — real collaborative filtering over order
@@ -586,6 +595,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(400, {"error": str(e)})
         elif path == "/config":
             self._json(200, {"quack_url": QUACK_PUBLIC_URL, "quack_token": QUACK_TOKEN})
+        elif path == "/stock":
+            try:
+                self._json(200, {"stock": get_stock()})
+            except Exception as e:
+                self._json(500, {"error": str(e)})
         elif path == "/dashboard-data":
             try:
                 self._json(200, get_dashboard())

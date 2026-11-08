@@ -35,10 +35,10 @@ duckdb_cli oltp.duckdb -f 03_lake.sql
 echo "==> --  export product catalog for the browser demo"
 duckdb_cli oltp.duckdb -c "COPY (
   SELECT p.product_id, p.name, p.category,
-         round(p.price_cents/100.0,2) AS price_eur, i.stock, (i.stock>0) AS in_stock,
+         round(p.price_cents/100.0,2) AS price_eur,
          round(3.0+((p.product_id*37)%20)/10.0,1) AS rating,
          ((p.product_id*53)%500) AS popularity, p.description
-  FROM products p JOIN inventory i USING (product_id) ORDER BY p.product_id
+  FROM products p ORDER BY p.product_id
 ) TO 'public/catalog.parquet' (FORMAT PARQUET);"
 
 echo "==> 04  build marts (attaches OLTP read-only + the DuckLake catalog)"
