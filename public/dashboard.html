@@ -128,6 +128,8 @@
   .empty b{color:var(--ink);font-family:'Fredoka',sans-serif}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
+<link rel="stylesheet" href="xray.css" />
+<script src="xray.js" defer></script>
 <script type="importmap">
 { "imports": { "apache-arrow": "https://cdn.jsdelivr.net/npm/apache-arrow@17.0.0/+esm" } }
 </script>
@@ -140,9 +142,12 @@
       <span class="tag">Where the flock's numbers waddle in — live from oltp.duckdb + the lake.</span>
       <a class="navlink" href="./">🛍️ Back to the store</a>
       <a class="navlink" id="refreshBtn" href="#" title="Refresh">🔄 Refresh</a>
+      <button class="navlink xraybtn" id="xrayBtn" type="button" aria-pressed="false">🩻 X-ray</button>
     </div>
     <div class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling the numbers together…</span></div>
   </header>
+
+  <section class="xraybar" id="xrayBar" data-page="dashboard" aria-label="How this page uses DuckDB"></section>
 
   <div id="stressBar" class="stress-bar">
     <span class="bolt">⚡</span>
@@ -154,6 +159,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
+const xr = key => (window.tealXray ? window.tealXray.html(key) : '');   // X-ray label markup (xray.js)
 
 const CATEGORY_EMOJI = { dabbling:'🦆', diving:'🤿', sea:'🌊', perching:'🌳' };
 const CATEGORY_COLOR = { dabbling:'var(--cat-dabbling)', diving:'var(--cat-diving)', sea:'var(--cat-sea)', perching:'var(--cat-perching)' };
@@ -202,8 +208,10 @@ async function bootQuack() {
     const cfg = await (await fetch('/config')).json();   // where the collector's quack endpoint is, from the page's point of view
     await quackConn.query(`ATTACH '${cfg.quack_url}' AS remote (TOKEN '${cfg.quack_token}')`);
     hasQuack = true;
+    window.tealXray?.set({ quack: true });
   } catch (e) {
     console.warn('quack unavailable — funnel/retention/daily will stay in their waiting state', e);
+    window.tealXray?.set({ quack: false });
   }
 }
 
@@ -441,16 +449,19 @@ function render(d) {
       <div class="card${changed.funnelChart ? ' pulse' : ''}">
         <h2>🦆 Conversion funnel</h2>
         <div class="sub">Sessions that added to their flock, and of those, who took them home. Live via Quack.</div>
+        <div class="xtag" data-xray="lake">${xr('lake')}</div>
         ${d.funnel ? funnelChart(d.funnel) : waiting}
       </div>
       <div class="card${changed.revenueChart ? ' pulse' : ''}">
         <h2>💰 Revenue by category</h2>
         <div class="sub">Confirmed + shipped orders only.</div>
+        <div class="xtag" data-xray="oltp">${xr('oltp')}</div>
         ${d.revenue_by_category.length ? revenueChart(d.revenue_by_category) : `<div class="empty">No revenue yet.</div>`}
       </div>
       <div class="card wide${changed.retentionChart ? ' pulse' : ''}">
         <h2>🌊 Retention</h2>
         <div class="sub">Active users by weeks since their first visit — the pond drains, as ponds do. Live via Quack.</div>
+        <div class="xtag" data-xray="lake">${xr('lake')}</div>
         ${d.retention === null ? waiting : (d.retention.length ? lineChart({
           data: d.retention.map(r => ({ x: num(r.weeks_since), value: num(r.active_users) })),
           series: [{ key: 'value', label: 'Active users', color: 'var(--teal)' }],
@@ -459,6 +470,7 @@ function render(d) {
       <div class="card wide${changed.dailyChart ? ' pulse' : ''}">
         <h2>📈 Daily activity</h2>
         <div class="sub">Pageviews, add-to-flocks, and completed orders per day across the lake. Live via Quack.</div>
+        <div class="xtag" data-xray="lake">${xr('lake')}</div>
         ${d.daily === null ? waiting : (d.daily.length ? lineChart({
           data: d.daily.map(r => ({ x: r.date.slice(5), pageviews: num(r.pageviews), carts: num(r.carts), purchases: num(r.purchases) })),
           series: [

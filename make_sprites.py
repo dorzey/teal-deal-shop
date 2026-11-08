@@ -136,9 +136,49 @@ def symbol(name, head, body, breast, wing, bill, o):
     a('<path d="M4 78 Q18 72 32 78 T60 78 T88 78 T116 78" fill="none" stroke="#4FA5C0" stroke-width="3" stroke-linecap="round" opacity=".55"/>')
     return f'<symbol id="{slug(name)}" viewBox="0 0 124 90">' + "".join(out) + "</symbol>"
 
+def _bezier(p0, p1, p2, p3, t):
+    u = 1 - t
+    return tuple(u**3 * a + 3 * u * u * t * b + 3 * u * t * t * c + t**3 * d
+                 for a, b, c, d in zip(p0, p1, p2, p3))
+
+def skeleton_symbol():
+    """One skeleton shared by every species — they share a body plan (see symbol())
+    — drawn in the same 124x90 frame, in currentColor so CSS can make it glow. It is
+    only shown in the storefront's X-ray mode, laid over the inverted duck."""
+    out = []
+    a = out.append
+    neck = ((90, 43), (94, 50), (86, 56), (76, 46))      # skull base -> shoulders (an S)
+    back = ((76, 46), (60, 37), (40, 40), (24, 52))      # shoulders -> tail
+    # vertebral column: a line, then a bead per vertebra
+    for curve, n, r in ((neck, 8, 1.7), (back, 10, 2.0)):
+        pts = [_bezier(*curve, i / n) for i in range(n + 1)]
+        a('<path d="M%.1f %.1f C%d %d %d %d %d %d" stroke-width="1"/>' % (*pts[0], *curve[1], *curve[2], *curve[3]))
+        for x, y in pts[1:-1] if curve is neck else pts[1:]:
+            a(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r}" fill="currentColor" fill-opacity=".85" stroke-width=".6"/>')
+    a('<path d="M24 52 L10 46 L12 55 Z" fill="currentColor" fill-opacity=".25"/>')            # pygostyle
+    # ribs: from the back, curving down and forward to the keel
+    for t in (.20, .32, .44, .56, .68):
+        x, y = _bezier(*back, t)
+        a('<path d="M%.1f %.1f Q%.1f %.1f %.1f %.1f"/>' % (x, y, x + 15, y + 5, x + 8, min(74, y + 31)))
+    a('<path d="M44 74 Q66 80 90 67" stroke-width="2.4"/>')                                   # keel
+    a('<path d="M80 49 Q83 64 93 58"/>')                                                      # wishbone
+    # wing: humerus, radius + ulna, hand
+    a('<path d="M66 47 L48 56" stroke-width="2.2"/><path d="M48 56 L27 57.5"/><path d="M48 53.5 L27 55"/>'
+      '<path d="M27 57.5 L19 61.5"/>')
+    # pelvis, leg, webbed foot
+    a('<path d="M36 52 Q42 62 52 58"/><path d="M36 52 L28 54"/>')
+    a('<path d="M44 60 L54 69" stroke-width="2.2"/><path d="M54 69 L46 82" stroke-width="2.2"/>')
+    a('<path d="M46 82 L38 87 M46 82 L47 88 M46 82 L55 86 M38 87 Q47 90 55 86" stroke-width="1"/>')
+    # skull, eye socket, bill
+    a('<path d="M82 34 Q83 24 92 24 Q102 25 102 33 Q101 41 92 42 Q83 42 82 34Z" fill="currentColor" fill-opacity=".14"/>')
+    a('<circle cx="94" cy="30" r="3.8" fill="#000" fill-opacity=".55"/>')
+    a('<path d="M101 31 Q111 31 117 35 Q111 39 101 38"/><path d="M103 34.5 L115 35"/>')
+    return ('<symbol id="skeleton" viewBox="0 0 124 90"><g fill="none" stroke="currentColor" stroke-width="1.3" '
+            'stroke-linecap="round" stroke-linejoin="round">' + "".join(out) + "</g></symbol>")
+
 if __name__ == "__main__":
     assert len(SPECIES) == 60, len(SPECIES)
     body = "\n".join(symbol(n, *v[:5], v[5]) for n, v in SPECIES.items())
     with open("public/ducks.svg", "w") as f:
-        f.write(f'<svg xmlns="http://www.w3.org/2000/svg" style="display:none">\n{body}\n</svg>\n')
-    print(f"wrote public/ducks.svg ({len(SPECIES)} symbols)")
+        f.write(f'<svg xmlns="http://www.w3.org/2000/svg" style="display:none">\n{body}\n{skeleton_symbol()}\n</svg>\n')
+    print(f"wrote public/ducks.svg ({len(SPECIES)} symbols + skeleton)")
