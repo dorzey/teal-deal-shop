@@ -182,8 +182,9 @@ const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximum
 // ATTACH to a 2.0 server; @duckdb/duckdb-wasm is still on 1.5.x here and
 // speaks an older quack protocol. Only the threaded variant works: quack needs
 // real threads, which needs a cross-origin-isolated page, so collector.py
-// serves this page with COOP/COEP headers. index.html stays on
-// @duckdb/duckdb-wasm@1.29.0 — it only reads the static catalog.parquet.
+// serves this page with COOP/COEP headers. index.html uses the same package, pinned to
+// the same version (test_pages.py checks), but its non-threaded build — the shop
+// needs no quack, so no isolation.
 // Pinned to an exact rc rather than @latest. Caveat: the quack extension itself is
 // fetched from Haybarn's repository at a fixed v2.0.0 path that they replace in
 // place, so a pin can stop matching it (rc7 did, after 2026-10-30; rc12 matches).

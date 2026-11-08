@@ -155,8 +155,9 @@ reach the collector.) The Dockerfile builds for x86 and ARM (CX/CPX or CAX nodes
 Things to watch on a Cloudflare-fronted site: turn off *Rocket Loader* and *Auto Minify*
 (they rewrite scripts), and if the tracker's `POST /collect` or the dashboard's `POST
 /quack` are being challenged or blocked, check *Bot Fight Mode* and any WAF rules for
-this hostname — browsers can't solve a challenge on a background POST. The dashboard
-downloads ~45 MB of wasm from jsDelivr on first load, not through Cloudflare.
+this hostname — browsers can't solve a challenge on a background POST. Both pages
+load the DuckDB-Wasm engine from jsDelivr, not through Cloudflare: about 7 MB over
+the wire per build on first load (it unpacks to ~45 MB in memory).
 
 ## The tiers
 
@@ -239,8 +240,13 @@ on the DuckDB 2.0 engine whose quack extension can `ATTACH` to a 2.0 server —
 `@duckdb/duckdb-wasm` is still 1.5.x and speaks an older quack protocol. Only the
 threaded variant works (quack needs real threads), so the collector serves
 `dashboard.html` with `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: credentialless`. The storefront stays on the
-pinned `duckdb-wasm@1.29.0`, which only reads the static `catalog.parquet`.
+`Cross-Origin-Embedder-Policy: credentialless`. The storefront uses the same package
+at the same pinned version (`test_pages.py` checks they agree) but its non-threaded
+build: the shop needs no quack, so no cross-origin isolation. Haybarn ships only
+those two builds, with no fallbacks for browsers lacking WebAssembly exception
+handling, and its extension files are replaced in place (see the note in
+`dashboard.html`) — the two reasons to move both pages to the official
+`@duckdb/duckdb-wasm` once it ships a 2.0 build that can attach to a 2.0 quack server.
 
 **Concurrent writers (`07_stress.py`).** N threads, each with its own quack
 connection, `INSERT` into the live DuckLake catalog at once — a real exercise
@@ -284,7 +290,9 @@ pointing at `06_ducklake.sql`.
 Parquet and runs DuckDB *in the browser*: every keystroke, facet, and sort is a
 real SQL query with zero round-trips, blending BM25 (`fts`) with an `ILIKE`
 fallback so mid-word typing never flickers to zero results. "Ducks like this"
-is a real text embedding (`vss`), computed live in-browser. The console strip
+is a real text embedding (`vss`) whose neighbours are found once, in the browser,
+with DuckDB 2.0's `NEAREST` join — the same engine version as the server, via
+Query Farm's Haybarn build of DuckDB-Wasm. The console strip
 at the bottom shows the generated SQL and its sub-millisecond execution time.
 Reads and personalization live in the browser; **truth stays on the server**
 (anything on the write path — checkout, inventory — is the OLTP tier). One

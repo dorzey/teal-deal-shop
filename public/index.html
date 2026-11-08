@@ -8,15 +8,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <!-- Start the in-browser DuckDB downloads at HTML parse time instead of after the
-     module script boots: the wasm, then the parquet/fts/vss extensions it
-     fetches itself, all otherwise queue up one after another. Same URLs
-     duckdb-wasm@1.29.0 (engine v1.1.1, eh build) requests, so they hit the cache. -->
+     module script boots: the wasm, then the fts/vss extensions it fetches itself,
+     would otherwise queue up one after another. These are the URLs the Haybarn build
+     of DuckDB-Wasm (DuckDB 2.0, non-threaded) requests, so they hit the cache. The
+     version pin appears here, in the module script below and in dashboard.html;
+     test_pages.py checks they agree. -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-<link rel="preconnect" href="https://extensions.duckdb.org" crossorigin />
-<link rel="preload" as="fetch" crossorigin href="https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-eh.wasm" />
-<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/parquet.duckdb_extension.wasm" />
-<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/fts.duckdb_extension.wasm" />
-<link rel="preload" as="fetch" crossorigin href="https://extensions.duckdb.org/v1.1.1/wasm_eh/vss.duckdb_extension.wasm" />
+<link rel="preconnect" href="https://haybarn-extensions.query.farm" crossorigin />
+<link rel="preload" as="fetch" crossorigin href="https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc12/dist/duckdb-base.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://haybarn-extensions.query.farm/core/v2.0.0/wasm_eh/parquet.duckdb_extension.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://haybarn-extensions.query.farm/core/v2.0.0/wasm_eh/fts.duckdb_extension.wasm" />
+<link rel="preload" as="fetch" crossorigin href="https://haybarn-extensions.query.farm/core/v2.0.0/wasm_eh/vss.duckdb_extension.wasm" />
+<script type="importmap">{ "imports": { "apache-arrow": "https://cdn.jsdelivr.net/npm/apache-arrow@17.0.0/+esm" } }</script>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <style>
   :root{
@@ -472,7 +475,10 @@
 
 <script src="tracker.js" data-collector="/collect"></script>
 <script type="module">
-import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+// Query Farm's Haybarn build of DuckDB-Wasm: the DuckDB 2.0 engine, same as the server and the
+// dashboard (the apache-arrow import map is in <head>). Pinned to an exact release candidate;
+// see the note in dashboard.html about why a pin can stop matching its extensions.
+import * as duckdb from 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc12/dist/duckdb-browser.mjs';
 
 const $ = id => document.getElementById(id);
 const CATEGORIES = ['dabbling','diving','sea','perching'];
@@ -526,12 +532,15 @@ function burstFeathers() {
 
 // ---- boot DuckDB-WASM ----
 const STOCK_POLL_MS = 4000;
+let liveStock = {}; // product_id -> units left, from /stock
 // Pull live inventory from the collector into the local catalog table.
 // Resolves true if any stock value changed (so the caller can re-render).
 async function refreshStock() {
   const res = await fetch('/stock', { cache: 'no-store' });
   if (!res.ok) throw new Error(`/stock HTTP ${res.status}`);
   const { stock } = await res.json();
+  liveStock = stock;
+  if (typeof clampCart === 'function') clampCart();
   const vals = Object.entries(stock).map(([id, n]) => `(${+id}, ${+n})`).join(',');
   if (!vals) return false;
   const before = (await conn.query(`SELECT sum(stock * product_id) AS h FROM catalog`)).toArray()[0].h;
@@ -541,8 +550,11 @@ async function refreshStock() {
 }
 
 async function boot() {
-  const bundles = duckdb.getJsDelivrBundles();
-  const bundle = await duckdb.selectBundle(bundles);
+  // Haybarn ships a non-threaded ("base") and a threaded build, with no fallbacks for
+  // older browsers. The shop needs no threads — only quack does, on the dashboard — so it
+  // takes the base build and needs no cross-origin isolation.
+  const HAYBARN = 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc12/dist';
+  const bundle = { mainModule: `${HAYBARN}/duckdb-base.wasm`, mainWorker: `${HAYBARN}/duckdb-browser-base.worker.js`, pthreadWorker: null };
   const workerUrl = URL.createObjectURL(
     new Blob([`importScripts("${bundle.mainWorker}");`], { type:'text/javascript' })
   );
@@ -600,8 +612,8 @@ async function loadExtras() {
   window.tealXray?.set({ fts: hasFts });   // so the X-ray labels say what is really running
 
   // "Ducks like this": DuckDB-WASM can load the vss extension itself —
-  // INSTALL/LOAD vss and array_distance both work in-browser — so
-  // recommendations are computed live, right here, from a real text
+  // INSTALL/LOAD vss, array_distance and the 2.0 NEAREST join all work
+  // in-browser — so recommendations are computed live, right here, from a real text
   // embedding (hashed bag-of-words over name+description, same formula as
   // 05_extras.sql / collector.py). No precompute, export step, or
   // external model needed.
@@ -629,6 +641,23 @@ async function loadExtras() {
     `);
     await conn.query(`DROP TABLE _tokens`);
     await conn.query(`DROP TABLE _buckets`);
+    // Each duck's nearest neighbours, computed once with DuckDB 2.0's NEAREST join (top-k
+    // by a distance) so the per-keystroke search query only has to look them up. Many
+    // ducks are exactly as near as others (equal distances), and NEAREST picks
+    // arbitrarily among ties at its cutoff — so ask for 12 (every duck is also its own
+    // nearest) and let row_number keep the best 4 others, ties broken by id. That makes
+    // the lists deterministic, and identical to the server's.
+    await conn.query(`
+      CREATE TABLE product_neighbors AS
+      SELECT v1.product_id AS product_id, c2.name AS name,
+             row_number() OVER (PARTITION BY v1.product_id
+                                ORDER BY array_distance(v1.embedding, v2.embedding), v2.product_id) AS rank
+      FROM product_vectors v1
+      JOIN product_vectors v2 NEAREST 12 BY DISTANCE array_distance(v1.embedding, v2.embedding)
+      JOIN catalog c2 ON c2.product_id = v2.product_id
+      WHERE v2.product_id <> v1.product_id
+      QUALIFY rank <= 4
+    `);
     hasRecs = true;
   } catch (e) { console.warn('vss unavailable — recommendations disabled', e); }
   window.tealXray?.set({ vss: hasRecs });
@@ -655,7 +684,7 @@ function buildSQL() {
   if (state.inStock) where.push(`in_stock`);
   const clause = where.length ? `\nWHERE ${where.join('\n  AND ')}` : '';
   const simCol = hasRecs
-    ? `,\n  (SELECT string_agg(name, ' · ' ORDER BY dist) FROM (\n     SELECT c2.name AS name, array_distance(v1.embedding, v2.embedding) AS dist\n     FROM product_vectors v1 JOIN product_vectors v2 ON v2.product_id <> v1.product_id\n     JOIN catalog c2 ON c2.product_id = v2.product_id\n     WHERE v1.product_id = catalog.product_id\n     ORDER BY dist LIMIT 4\n  )) AS similar_names`
+    ? `,\n  (SELECT string_agg(name, ' · ' ORDER BY rank) FROM product_neighbors n\n   WHERE n.product_id = catalog.product_id) AS similar_names`
     : '';
   return `SELECT product_id, name, category, price_eur, rating, in_stock, stock, description${simCol}\nFROM catalog${clause}\nORDER BY ${state.sort}`;
 }
@@ -800,8 +829,30 @@ document.addEventListener('click', e => {
   if (matchMedia('(max-width:640px)').matches && !e.target.closest('.cartwrap')) setCartOpen(false);
 });
 
+// Never let the flock hold more than is in stock: the server would 409 the
+// whole order. Trim lines (and drop sold-out ones) when stock moves under us.
+function clampCart() {
+  const trimmed = [];
+  for (const [id, it] of [...cart]) {
+    const left = liveStock[id] ?? Infinity;
+    if (it.qty > left) {
+      trimmed.push(it.name);
+      if (left > 0) it.qty = left; else cart.delete(id);
+    }
+  }
+  if (trimmed.length) {
+    renderCart();
+    showToast(`🦆 Stock changed — trimmed your flock: ${trimmed.join(', ')}`);
+  }
+}
+
 function addToFlock(id, name, price) {
   const existing = cart.get(id);
+  const left = liveStock[id] ?? Infinity;
+  if ((existing?.qty || 0) >= left) {
+    showToast(`🦆 Only ${left} ${name} left to adopt — all in your flock`);
+    return;
+  }
   cart.set(id, { name, price_eur: price, qty: (existing?.qty || 0) + 1 });
   renderCart();
   mascotMood('hop');
@@ -887,7 +938,10 @@ async function placeOrder() {
       body: JSON.stringify({ user_id: userId, items }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      if (res.status === 409) { await refreshStock().catch(() => {}); run(); }
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
 
     const total = [...cart.values()].reduce((s, it) => s + it.qty * it.price_eur, 0);
     cart.clear(); renderCart();
@@ -899,7 +953,7 @@ async function placeOrder() {
     run();
   } catch (err) {
     mascotMood('upset', 'QUACK?!');
-    showToast(`🦆 Whoa there — sold out mid-waddle: ${err.message}`);
+    showToast(`🦆 Couldn't take them home (${err.message}). Stock refreshed — check your flock.`);
   } finally {
     $('checkoutBtn').disabled = !cart.size;
   }
