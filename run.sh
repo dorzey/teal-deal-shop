@@ -10,6 +10,11 @@ set -euo pipefail
 DUCKDB="${DUCKDB:-duckdb}"
 cd "$(dirname "$0")"
 
+# The CLI switches to "agent mode" when stdout isn't a terminal and an AI_AGENT
+# variable is set (it is under coding agents). That mode aborts the transaction in
+# 02_oltp.sql, so always turn it off: the build must not depend on who runs it.
+duckdb_cli() { "$DUCKDB" -no-agent "$@"; }
+
 echo "==> uv sync (Python deps, pinned duckdb==2.0.0)"
 uv sync
 
@@ -19,16 +24,16 @@ rm -f oltp.duckdb marts.duckdb teal_deal_catalog.ducklake
 rm -rf lakehouse_data && mkdir -p public
 
 echo "==> 01  seed OLTP (schema, constraints, synthetic data)"
-"$DUCKDB" oltp.duckdb -f 01_seed.sql
+duckdb_cli oltp.duckdb -f 01_seed.sql
 
 echo "==> 02  place an order (all-or-nothing transaction)"
-"$DUCKDB" oltp.duckdb -f 02_oltp.sql
+duckdb_cli oltp.duckdb -f 02_oltp.sql
 
 echo "==> 03  clickstream -> DuckLake catalog (needs network the first time)"
-"$DUCKDB" oltp.duckdb -f 03_lake.sql
+duckdb_cli oltp.duckdb -f 03_lake.sql
 
 echo "==> --  export product catalog for the browser demo"
-"$DUCKDB" oltp.duckdb -c "COPY (
+duckdb_cli oltp.duckdb -c "COPY (
   SELECT p.product_id, p.name, p.category,
          round(p.price_cents/100.0,2) AS price_eur, i.stock, (i.stock>0) AS in_stock,
          round(3.0+((p.product_id*37)%20)/10.0,1) AS rating,
@@ -37,15 +42,15 @@ echo "==> --  export product catalog for the browser demo"
 ) TO 'public/catalog.parquet' (FORMAT PARQUET);"
 
 echo "==> 04  build marts (attaches OLTP read-only + the DuckLake catalog)"
-"$DUCKDB" marts.duckdb -f 04_marts.sql
+duckdb_cli marts.duckdb -f 04_marts.sql
 
 echo "==> 05  extensions showcase: fts / vss / spatial / DuckPGQ (best effort — needs network)"
-if ! "$DUCKDB" oltp.duckdb -f 05_extras.sql; then
+if ! duckdb_cli oltp.duckdb -f 05_extras.sql; then
   echo "    05_extras.sql failed (likely no network/extension access) — continuing without it"
 fi
 
 echo "==> 06  explore the lake's snapshots + time travel (best effort — needs network)"
-if ! "$DUCKDB" -f 06_ducklake.sql; then
+if ! duckdb_cli -f 06_ducklake.sql; then
   echo "    06_ducklake.sql failed (likely no network/extension access) — continuing without it"
 fi
 

@@ -119,6 +119,17 @@ transaction rolls back. DuckDB is single-writer, so the honest way to run an
 app on it is to funnel every write through **one serializing process** holding
 the sole write connection; readers use separate read-only connections.
 
+Two DuckDB 2.0 **triggers** keep the stock honest, in the database rather than in
+`collector.py`, so every writer gets them. `trg_stock_audit` logs each inventory
+change to `stock_audit`. `trg_restock` is the demo's self-healing: when an order
+leaves a product under 5 it is topped back up to 40 (a "supplier delivery") inside
+the same transaction, so a public demo can't sell itself empty. Two limits shaped
+it: a trigger can't update its own table ("recursive trigger chains are not yet
+supported"), so it hangs off `order_items` rather than `inventory`; and triggers
+live inside one database, so they can't reset the DuckLake events or the whole
+demo — for that, recreate the container (`make up RESET=1`). `02_oltp.sql` shows
+the restock happening.
+
 **`03_lake.sql` — web analytics.** A tracker's `pageview` / `add_to_cart` /
 `purchase` events land directly in a **DuckLake catalog** (not a bare Parquet
 directory), with a semi-structured JSON `props` column so the schema can

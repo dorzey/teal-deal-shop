@@ -196,6 +196,21 @@ CREATE TRIGGER trg_stock_audit AFTER UPDATE ON inventory
         INSERT INTO stock_audit (product_id, old_stock, new_stock)
         SELECT n.product_id, o.stock, n.stock FROM o JOIN n USING (product_id);
 
+-- ---- Auto-restock (DuckDB 2.0 trigger) --------------------------------------
+-- A public demo drains its own shelves. When an order leaves a product under 5,
+-- a "supplier delivery" tops it back up to 40, in the same transaction as the
+-- order. It hangs off order_items, not inventory: a trigger can't update the
+-- table it is attached to (DuckDB: "recursive trigger chains are not yet
+-- supported"), and an order inserts its line items right after decrementing
+-- stock. The restock UPDATE fires trg_stock_audit above, so deliveries show up
+-- in stock_audit too. An oversell still fails the CHECK (stock >= 0) before this
+-- runs, so "not enough stock" keeps working.
+CREATE TRIGGER trg_restock AFTER INSERT ON order_items
+    REFERENCING NEW TABLE AS n
+    FOR EACH STATEMENT
+        UPDATE inventory SET stock = 40
+        WHERE product_id IN (SELECT product_id FROM n) AND stock < 5;
+
 SELECT 'seed complete' AS status,
        (SELECT count(*) FROM users)       AS users,
        (SELECT count(*) FROM products)    AS products,

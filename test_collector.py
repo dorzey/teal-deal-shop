@@ -102,5 +102,63 @@ class RateLimiter(unittest.TestCase):
         self.assertEqual(rl.allow("k", 6000, 2), 0)
 
 
+class Restock(unittest.TestCase):
+    """The inventory triggers from 01_seed.sql, exercised through place_order."""
+
+    @classmethod
+    def setUpClass(cls):
+        import duckdb, os
+        cls.con = duckdb.connect()
+        with open(os.path.join(os.path.dirname(__file__), "01_seed.sql")) as f:
+            cls.con.execute(f.read())
+        c._oltp_con = cls.con            # place_order() uses whatever _oltp() holds
+
+    @classmethod
+    def tearDownClass(cls):
+        c._oltp_con = None
+        cls.con.close()
+
+    def stock(self, pid):
+        return self.con.execute("SELECT stock FROM inventory WHERE product_id = ?", [pid]).fetchone()[0]
+
+    def pick(self, order_by):
+        return self.con.execute(f"SELECT product_id, stock FROM inventory ORDER BY {order_by} LIMIT 1").fetchone()
+
+    def test_an_order_that_runs_a_product_low_restocks_it_and_audits_both_steps(self):
+        pid, stock = self.pick("stock, product_id")
+        self.assertGreaterEqual(stock, 3)
+        c.place_order(7, [{"product_id": pid, "qty": stock - 1}])     # leaves 1 on the shelf
+        self.assertEqual(self.stock(pid), 40)
+        audit = self.con.execute(
+            "SELECT old_stock, new_stock FROM stock_audit WHERE product_id = ? ORDER BY changed_at", [pid]).fetchall()
+        self.assertEqual(audit, [(stock, 1), (1, 40)])
+
+    def test_a_product_with_plenty_of_stock_is_just_decremented(self):
+        pid, stock = self.pick("stock DESC, product_id")
+        c.place_order(7, [{"product_id": pid, "qty": 2}])
+        self.assertEqual(self.stock(pid), stock - 2)
+
+    def test_only_the_products_in_the_order_are_restocked(self):
+        low, other = [r[0] for r in self.con.execute(
+            "SELECT product_id FROM inventory ORDER BY stock, product_id LIMIT 2").fetchall()]
+        before = self.stock(other)
+        c.place_order(7, [{"product_id": low, "qty": self.stock(low) - 1}])
+        self.assertEqual(self.stock(other), before)
+
+    def test_overselling_still_fails_and_changes_nothing(self):
+        pid, stock = self.pick("stock DESC, product_id")
+        orders = self.con.execute("SELECT count(*) FROM orders").fetchone()[0]
+        with self.assertRaises(Exception):
+            c.place_order(7, [{"product_id": pid, "qty": stock + 1}])
+        self.assertEqual(self.stock(pid), stock)
+        self.assertEqual(self.con.execute("SELECT count(*) FROM orders").fetchone()[0], orders)
+
+    def test_unknown_product_is_rejected_without_leaving_an_empty_order(self):
+        orders = self.con.execute("SELECT count(*) FROM orders").fetchone()[0]
+        with self.assertRaises(ValueError):
+            c.place_order(7, [{"product_id": 99999, "qty": 1}])
+        self.assertEqual(self.con.execute("SELECT count(*) FROM orders").fetchone()[0], orders)
+
+
 if __name__ == "__main__":
     unittest.main()
