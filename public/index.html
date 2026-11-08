@@ -798,7 +798,7 @@ function showToast(msg) {
 }
 
 // ---- cart ("flock") + checkout: a real order, written into oltp.duckdb ----
-// No login flow in this demo, so map the tracker's durable visitor_id onto
+// No login flow in this demo, so map the tracker's per-tab session id onto
 // one of the 500 seeded users (FNV-1a -> range 1..500) instead of inventing
 // a fake signup.
 function hashUser(s) {
@@ -806,7 +806,7 @@ function hashUser(s) {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (Math.abs(h) % 500) + 1;
 }
-const userId = hashUser((window.tealDeal && window.tealDeal.visitorId) || String(Math.random()));
+const userId = hashUser((window.tealDeal && window.tealDeal.sessionId) || String(Math.random()));
 
 const cart = new Map(); // product_id -> { name, price_eur, qty }
 
