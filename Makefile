@@ -10,7 +10,7 @@ QUACK   ?= quack:localhost:8789
 TOKEN   ?= teal-deal-demo-token
 
 .DEFAULT_GOAL := help
-.PHONY: help build run serve public up down browser check stress stop
+.PHONY: help build run serve public up down browser check stress test stop
 
 help:  ## list the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-9s %s\n", $$1, $$2}'
@@ -61,6 +61,9 @@ check:  ## confirm the quack endpoint refuses writes (alongside `make public` or
 
 stress:  ## concurrent-writer test (plain mode only; public mode refuses writes)
 	uv run 07_stress.py --workers 8 --duration 10
+
+test:  ## unit tests: request validation and rate limits (no build or network needed)
+	uv run python -m unittest
 
 stop:  ## stop collector, proxy/containers and throwaway browser
 	-@pkill -INT -f "[c]ollector.py"

@@ -62,6 +62,18 @@ so the page's quack token being public is harmless. `make public` runs the
 collector natively next to a Caddy container (Linux only: Docker host networking);
 `make up` runs both in containers and works anywhere Docker does.
 
+**Abuse limits** (always on, `collector.py`): `/collect` and `/order` — the two
+endpoints that write — have per-IP and global token-bucket rate limits (429 with
+`Retry-After`), a 16 KB body cap, and strict validation: only the tracker's event
+types, integer ids, at most 20 events per request, orders of 1–10 of a product
+(a negative quantity would otherwise add stock). The read endpoints are limited
+too. Behind the proxy the client IP comes from `X-Forwarded-For`, which Caddy
+overwrites, so it can't be spoofed. Limits live in the `LIMITS` table at the top
+of the abuse section; `make test` covers them. Not covered: queries sent straight
+to the read-only quack endpoint (only `quack_server_max_connections` caps those),
+and a distributed flood can still use up the global order limit and lock out
+real shoppers — fine for a demo.
+
 The `Dockerfile` bakes everything into the image: the pinned 2.0.0 CLI, the Python
 deps, every DuckDB extension, and the seeded data (`run.sh --build-only`), so a
 container needs no network at runtime and always starts from the seeded state.
