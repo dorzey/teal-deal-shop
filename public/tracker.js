@@ -2,8 +2,9 @@
 // tracker.js — Teal Deal's tiny web-analytics tracker.
 //
 // Fires pageview / add_to_cart / purchase events at the collector. Keeps a
-// durable anonymous visitor_id and a 30-minute session_id in localStorage, and
-// prefers navigator.sendBeacon so events survive page unloads.
+// random per-tab session_id in sessionStorage (gone when the tab closes; no
+// cookies, nothing kept across visits), and prefers navigator.sendBeacon so
+// events survive page unloads.
 //
 // Usage in a page:
 //   <script src="tracker.js" data-collector="http://localhost:8787/collect"></script>
@@ -13,24 +14,19 @@
 (function () {
   const script = document.currentScript;
   const COLLECTOR = (script && script.dataset.collector) || 'http://localhost:8787/collect';
-  const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
-
   const uuid = () => crypto.randomUUID();
 
-  function visitorId() {
-    let v = localStorage.getItem('teal_deal_visitor');
-    if (!v) { v = uuid(); localStorage.setItem('teal_deal_visitor', v); }
-    return v;
-  }
+  // Per tab, never persisted across visits. If storage is blocked, one id per page load.
+  // earlier versions kept a durable id in localStorage; clear it from returning browsers
+  try { ['teal_deal_visitor', 'teal_deal_session', 'teal_deal_session_ts'].forEach(k => localStorage.removeItem(k)); } catch {}
 
+  let memo;
   function sessionId() {
-    const now = Date.now();
-    const last = +localStorage.getItem('teal_deal_session_ts') || 0;
-    let sid = localStorage.getItem('teal_deal_session');
-    if (!sid || now - last > SESSION_TIMEOUT_MS) sid = uuid();   // new session on timeout
-    localStorage.setItem('teal_deal_session', sid);
-    localStorage.setItem('teal_deal_session_ts', String(now));
-    return sid;
+    try {
+      let sid = sessionStorage.getItem('teal_deal_session');
+      if (!sid) { sid = uuid(); sessionStorage.setItem('teal_deal_session', sid); }
+      return sid;
+    } catch { return memo || (memo = uuid()); }
   }
 
   function send(event) {
@@ -44,7 +40,6 @@
       product_id: props.product_id ?? null,
       user_id: props.user_id ?? null,           // set once a visitor logs in
       event_ts: new Date().toISOString(),
-      visitor_id: visitorId(),
       session_id: sessionId(),
       props: {
         path: location.pathname,
@@ -55,7 +50,7 @@
     });
   }
 
-  window.tealDeal = { track, visitorId: visitorId() };
+  window.tealDeal = { track, sessionId: sessionId() };
   // Auto pageview once the tab is interactive.
   if (document.readyState !== 'loading') track('pageview');
   else document.addEventListener('DOMContentLoaded', () => track('pageview'));

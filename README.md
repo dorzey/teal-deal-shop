@@ -67,8 +67,8 @@ DuckLake with a JSON `props` column (schema evolves without migrations). Each
 commit is a snapshot: `AT (VERSION => n)` time travel and a change feed. The seed
 lands three chronological waves = three snapshots to explore immediately.
 
-**Live path** — `tracker.js` keeps a durable `visitor_id` and 30-min `session_id`,
-and `sendBeacon`s a pageview on load and `add_to_cart` on card click.
+**Live path** — `tracker.js` keeps only a random per-tab `session_id` (`sessionStorage`: gone when
+the tab closes, no cookies, no persistent visitor id) and `sendBeacon`s a pageview on load and `add_to_cart` on card click.
 `collector.py` batches them into the lake in the marts' schema, and merges small
 files every 60 s (`ducklake_merge_adjacent_files`). It holds two connections:
 `oltp.duckdb` (orders, recs, revenue) and the lake (events, funnel, retention).

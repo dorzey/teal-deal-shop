@@ -302,7 +302,6 @@ def _clean_event(ev):
     if not isinstance(props, dict) or len(props) > 20 or any(not isinstance(k, str) for k in props):
         raise HttpError(400, "props must be an object with at most 20 keys")
     props = dict(props)
-    props["visitor_id"] = _short_str(ev.get("visitor_id"), "visitor_id")
     props["session_id"] = _short_str(ev.get("session_id"), "session_id")
     props_json = json.dumps(props)
     if len(props_json) > MAX_PROPS_BYTES:
