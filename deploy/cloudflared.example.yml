@@ -1,4 +1,4 @@
-# The tunnel's ingress rules for test.dorzey.net.
+# The tunnel's ingress rules for tealdeal.dorzey.net.
 #
 # compose.prod.yaml runs the tunnel from a token, which means the tunnel is
 # "remotely managed": these rules are entered in the Cloudflare dashboard
@@ -11,17 +11,17 @@
 # CORS. Order matters: first match wins, so the path rule goes first.
 ingress:
   # the lake's read-only quack endpoint (dashboard)
-  - hostname: test.dorzey.net
+  - hostname: tealdeal.dorzey.net
     path: ^/quack
     service: http://127.0.0.1:8789
 
   # everything else: storefront, dashboard, /collect, /order, ...
-  - hostname: test.dorzey.net
+  - hostname: tealdeal.dorzey.net
     service: http://127.0.0.1:8787
 
   - service: http_status:404
 
 # Dashboard equivalent, one "Public Hostname" per rule:
-#   1. Subdomain test, domain dorzey.net, Path ^/quack   -> Service  HTTP  127.0.0.1:8789
-#   2. Subdomain test, domain dorzey.net, Path (empty)   -> Service  HTTP  127.0.0.1:8787
+#   1. Subdomain tealdeal, domain dorzey.net, Path ^/quack   -> Service  HTTP  127.0.0.1:8789
+#   2. Subdomain tealdeal, domain dorzey.net, Path (empty)   -> Service  HTTP  127.0.0.1:8787
 # and make sure rule 1 is listed above rule 2.

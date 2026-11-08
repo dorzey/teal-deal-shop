@@ -121,7 +121,7 @@ the rate limits' use of `CF-Connecting-IP` trustworthy — there is no other way
 reach the collector.) The Dockerfile builds for x86 and ARM (CX/CPX or CAX nodes).
 
 1. **Tunnel.** Cloudflare Zero Trust → Networks → Tunnels → create a `cloudflared`
-   tunnel and copy its token. Add two *Public Hostnames* for `test.dorzey.net`, in
+   tunnel and copy its token. Add two *Public Hostnames* for `tealdeal.dorzey.net`, in
    this order (`deploy/cloudflared.example.yml` has the same rules written out):
    1. path `^/quack` → HTTP `127.0.0.1:8789` (the lake's read-only quack endpoint)
    2. no path → HTTP `127.0.0.1:8787` (storefront, dashboard, `/collect`, `/order`)
@@ -131,12 +131,12 @@ reach the collector.) The Dockerfile builds for x86 and ARM (CX/CPX or CAX nodes
 2. **Node.** Docker with the compose plugin; `git clone` this repo.
 3. **Configure and start.**
    ```bash
-   cp .env.example .env        # set TUNNEL_TOKEN (and TEAL_DEAL_QUACK_URL if not test.dorzey.net)
+   cp .env.example .env        # set TUNNEL_TOKEN (and TEAL_DEAL_QUACK_URL if not tealdeal.dorzey.net)
    docker compose -f compose.prod.yaml up -d --build
    ```
-4. **Check.** `https://test.dorzey.net/` shows the shop, `/dashboard.html` fills in
+4. **Check.** `https://tealdeal.dorzey.net/` shows the shop, `/dashboard.html` fills in
    (funnel, retention and daily activity come from the browser over `/quack`), and
-   `curl https://test.dorzey.net/config` returns `quack:test.dorzey.net:443`.
+   `curl https://tealdeal.dorzey.net/config` returns `quack:tealdeal.dorzey.net:443`.
 5. **Reset** the demo (fresh seed data, empty lake) by recreating the containers —
    both, because `cloudflared` is attached to the app's network namespace:
    `docker compose -f compose.prod.yaml up -d --force-recreate`. A nightly cron entry
