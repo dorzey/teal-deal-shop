@@ -29,7 +29,8 @@
   html,body{margin:0}
   body{
     font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);
-    padding-bottom:132px; -webkit-font-smoothing:antialiased;
+    /* room for the fixed live-query drawer; --console-h is its real height (set in JS) */
+    padding-bottom:calc(var(--console-h, 132px) + 20px); -webkit-font-smoothing:antialiased;
   }
   .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
 
@@ -279,7 +280,7 @@
   }
   .similar b{color:var(--teal);font-weight:600}
   .toast{
-    position:fixed;bottom:96px;left:50%;transform:translateX(-50%) translateY(12px);
+    position:fixed;bottom:calc(var(--console-h, 80px) + 16px);left:50%;transform:translateX(-50%) translateY(12px);
     background:var(--ink);color:#fff;font-size:13px;padding:10px 16px;border-radius:10px;
     box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:all .2s ease;z-index:5;
   }
@@ -297,10 +298,23 @@
     border-top:1px solid #1E3A45;
   }
   .console .inner{max-width:1120px;margin:0 auto;padding:10px 20px;display:flex;gap:18px;align-items:flex-start}
+  .consoletoggle{
+    flex:none;display:flex;align-items:center;gap:10px;background:none;border:0;
+    padding:3px 0;cursor:pointer;color:#5F8494;font:inherit;text-align:left;
+  }
+  .consoletoggle:hover,.consoletoggle:focus-visible{color:#CFE0E6}
+  .consoletoggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
   .console .label{
     font-family:'JetBrains Mono',monospace;font-size:10.5px;letter-spacing:.12em;
-    text-transform:uppercase;color:#5F8494;flex:none;padding-top:3px;
+    text-transform:uppercase;
   }
+  .consoletoggle .chev{font-size:11px;transition:transform .15s ease}
+  .qsummary{display:none;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--accent)}
+  /* collapsed: just the bar, with the latest timing as a hint */
+  .console.collapsed .inner{padding:6px 20px}
+  .console.collapsed .qlog{display:none}
+  .console.collapsed .qsummary{display:block}
+  .console.collapsed .consoletoggle .chev{transform:rotate(180deg)}
   .qlog{flex:1;max-height:112px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
   .qrow{display:flex;gap:14px;align-items:baseline;font-family:'JetBrains Mono',monospace;font-size:12px}
   .qrow pre{margin:0;flex:1;color:#DCEAF0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -308,9 +322,53 @@
   .qrow .str{color:var(--accent)}
   .qrow .qms{flex:none;color:var(--accent);min-width:64px;text-align:right}
   .qrow .qrows{flex:none;color:#5F8494;min-width:52px;text-align:right}
+  /* phones */
   @media (max-width:640px){
-    .qrow pre{display:none}
-    .price{min-width:180px}
+    .wrap{padding:0 14px}
+    header{padding:22px 0 12px}
+    .mark h1{font-size:30px}
+    .status{margin-left:0}
+
+    /* filters: search and sort on their own full-width rows (the placeholder was
+       being cut off), price slider full width */
+    .controls{padding:14px}
+    .searchrow{flex-wrap:wrap}
+    .search,.sort{flex:1 1 100%}
+    .sort select{width:100%}
+    .facets{gap:12px}
+    .price{flex:1 1 100%;min-width:0}
+
+    /* two compact cards per row instead of one tall one: ~half the scrolling */
+    .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .card{padding:12px;gap:6px}
+    .card .name{font-size:14.5px}
+    .card .desc{
+      font-size:12px;display:-webkit-box;-webkit-line-clamp:3;
+      -webkit-box-orient:vertical;overflow:hidden;
+    }
+    .card .foot{flex-direction:column;align-items:flex-start;gap:6px}
+    .card .cart{width:100%}
+    .price-tag{font-size:17px}
+
+    /* the flock was a dropdown hanging off the chip and ran off the left edge of
+       the screen; here it is a sheet above the query drawer */
+    .cartpanel{
+      position:fixed;left:12px;right:12px;top:auto;width:auto;max-height:55vh;
+      overflow:auto;z-index:9;bottom:calc(var(--console-h, 0px) + 12px);
+    }
+    .toast{max-width:calc(100vw - 32px);text-align:center}
+
+    /* live-query drawer: stacked, and the SQL stays visible (it used to be hidden
+       here, leaving rows of unexplained timings) */
+    .console .inner{flex-direction:column;align-items:stretch;gap:6px;padding:8px 14px}
+    .consoletoggle{align-self:flex-start}
+    .qlog{min-width:0}
+    .console.collapsed .inner{padding:6px 14px}
+    .qrow{flex-wrap:wrap;gap:0 10px}
+    .qrow pre{flex:1 1 100%}
+    .qrow .qms{min-width:0;margin-left:auto}
+    .qrow .qrows{min-width:0}
+    .qlog{max-height:96px}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -392,9 +450,13 @@
   </div>
 </div>
 
-<div class="console">
+<div class="console" id="console">
   <div class="inner">
-    <span class="label">🦆 live&nbsp;queries</span>
+    <button class="consoletoggle" id="consoleToggle" type="button" aria-expanded="true" aria-controls="qlog">
+      <span class="label">🦆 live&nbsp;queries</span>
+      <span class="qsummary" id="qsummary"></span>
+      <span class="chev" aria-hidden="true">▾</span>
+    </button>
     <div class="qlog" id="qlog"></div>
   </div>
 </div>
@@ -580,7 +642,9 @@ function highlight(sql) {
 
 // ---- live query log: every query DuckDB-WASM runs, see conn.query above ----
 const QLOG_MAX = 30;
+let qCount = 0;
 function logQuery(sql, ms, rows) {
+  $('qsummary').textContent = `⚡ ${ms.toFixed(1)} ms · ${++qCount} quer${qCount === 1 ? 'y' : 'ies'}`;
   const oneLine = sql.replace(/\s+/g, ' ').trim();
   const row = document.createElement('div');
   row.className = 'qrow';
@@ -592,6 +656,23 @@ function logQuery(sql, ms, rows) {
   while (log.children.length > QLOG_MAX) log.removeChild(log.lastChild);
   log.scrollTop = 0;
 }
+
+// ---- the query drawer collapses; the choice is remembered, and phones start closed ----
+const consoleEl = $('console');
+function setConsoleOpen(open, remember = true) {
+  consoleEl.classList.toggle('collapsed', !open);
+  $('consoleToggle').setAttribute('aria-expanded', String(open));
+  if (remember) { try { localStorage.setItem('teal_deal_console', open ? 'open' : 'closed'); } catch {} }
+}
+let savedConsole = null;
+try { savedConsole = localStorage.getItem('teal_deal_console'); } catch {}
+setConsoleOpen(savedConsole ? savedConsole === 'open' : !matchMedia('(max-width:640px)').matches, false);
+$('consoleToggle').addEventListener('click', () => setConsoleOpen(consoleEl.classList.contains('collapsed')));
+// the full placeholder is cut off at a phone's width
+if (matchMedia('(max-width:640px)').matches) $('q').placeholder = 'Search the pond for a duck…';
+// the page's bottom padding, the toast and the phone cart sheet all follow the drawer's real height
+new ResizeObserver(() => document.documentElement.style.setProperty('--console-h', consoleEl.offsetHeight + 'px'))
+  .observe(consoleEl);
 
 const num = v => typeof v === 'bigint' ? Number(v) : v;
 const stars = r => { const f = Math.round(r); return '<span class="star">'+'★'.repeat(f)+'</span>'+'☆'.repeat(5-f); };
@@ -677,8 +758,14 @@ function renderCart() {
     : `<div class="cartempty">Your flock is empty. Go make some friends.</div>`;
 }
 
-$('cartBtn').addEventListener('click', () => {
-  $('cartPanel').classList.toggle('open');
+function setCartOpen(open) {
+  $('cartPanel').classList.toggle('open', open);
+  $('cartBtn').setAttribute('aria-expanded', String(open));
+}
+$('cartBtn').addEventListener('click', () => setCartOpen(!$('cartPanel').classList.contains('open')));
+// on a phone the flock is a sheet over the page, so tapping anywhere else dismisses it
+document.addEventListener('click', e => {
+  if (matchMedia('(max-width:640px)').matches && !e.target.closest('.cartwrap')) setCartOpen(false);
 });
 
 function addToFlock(id, name, price) {
@@ -776,7 +863,7 @@ async function placeOrder() {
       await conn.query(`UPDATE catalog SET stock = ${newStock}, in_stock = ${newStock > 0} WHERE product_id = ${it.product_id}`);
     }
     cart.clear(); renderCart();
-    $('cartPanel').classList.remove('open');
+    setCartOpen(false);
     mascotMood('party'); burstFeathers();
     showToast(`🦆 Taken home — order #${data.order_id}, ${quacker(total.toFixed(2))}. Waddle safe!`);
     showPostPurchaseRecs(items.map(it => it.product_id));
