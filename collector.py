@@ -21,7 +21,7 @@ DuckLake gives every insert a snapshot, so a periodic background call to
 ducklake_merge_adjacent_files() keeps that from turning into thousands of
 tiny files (see _compactor()) instead of the app hand-rolling file layout.
 """
-import json, os, sys, threading, time, datetime as dt
+import hashlib, json, os, re, sys, threading, time, datetime as dt
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -534,6 +534,20 @@ def get_dashboard():
 # ---- HTTP: static storefront + POST /collect + POST /order + GET /recommendations
 # + GET /hybrid-recommendations + GET /dashboard-data
 
+# Static assets get ?v=<content hash> in served HTML, so a CDN/browser that
+# caches them for a year (Cloudflare did) still fetches the new file once its
+# content changes.
+ASSET_RE = re.compile(r'\b(xray\.css|xray\.js|tracker\.js|ducks\.svg)(?=["#])')
+
+def version_assets(html, public=PUBLIC):
+    def tag(m):
+        try:
+            with open(os.path.join(public, m.group(1)), "rb") as f:
+                return f"{m.group(1)}?v={hashlib.sha1(f.read()).hexdigest()[:10]}"
+        except OSError:
+            return m.group(1)
+    return ASSET_RE.sub(tag, html)
+
 class Handler(SimpleHTTPRequestHandler):
     timeout = 15   # drop connections that stall mid-request (slowloris)
 
@@ -605,6 +619,18 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json(200, get_dashboard())
             except Exception as e:
                 self._json(500, {"error": str(e)})
+        elif path in ("/", "/index.html", "/dashboard.html"):
+            try:
+                with open(os.path.join(PUBLIC, path.lstrip("/") or "index.html"), encoding="utf-8") as f:
+                    body = version_assets(f.read()).encode()
+            except OSError:
+                return super().do_GET()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
         else:
             super().do_GET()
 

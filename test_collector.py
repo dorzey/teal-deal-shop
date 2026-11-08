@@ -79,6 +79,13 @@ class CleanOrder(unittest.TestCase):
                 self.assertEqual(cm.exception.status, 400)
 
 
+class VersionAssets(unittest.TestCase):
+    def test_local_assets_get_a_content_hash_and_others_are_untouched(self):
+        out = c.version_assets('<script src="xray.js" defer></script><use href="ducks.svg#x"/><script src="https://cdn/x.js">')
+        self.assertRegex(out, r'src="xray\.js\?v=[0-9a-f]{10}"')
+        self.assertRegex(out, r'href="ducks\.svg\?v=[0-9a-f]{10}#x"')
+        self.assertIn('src="https://cdn/x.js"', out)
+
 class RateLimiter(unittest.TestCase):
     def test_allows_a_burst_then_refuses_with_a_retry_hint(self):
         rl = c.RateLimiter()
