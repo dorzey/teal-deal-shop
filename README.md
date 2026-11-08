@@ -67,8 +67,10 @@ endpoints that write — have per-IP and global token-bucket rate limits (429 wi
 `Retry-After`), a 16 KB body cap, and strict validation: only the tracker's event
 types, integer ids, at most 20 events per request, orders of 1–10 of a product
 (a negative quantity would otherwise add stock). The read endpoints are limited
-too. Behind the proxy the client IP comes from `X-Forwarded-For`, which Caddy
-overwrites, so it can't be spoofed. Limits live in the `LIMITS` table at the top
+too. Behind the proxy the client IP comes from a header the proxy sets
+(`TEAL_DEAL_CLIENT_IP_HEADER`: `X-Forwarded-For` for Caddy, which overwrites it;
+`CF-Connecting-IP` behind Cloudflare, where `X-Forwarded-For` can be spoofed), so
+the limits can't be dodged by lying about your address. Limits live in the `LIMITS` table at the top
 of the abuse section; `make test` covers them. Not covered: queries sent straight
 to the read-only quack endpoint (only `quack_server_max_connections` caps those),
 and a distributed flood can still use up the global order limit and lock out
@@ -77,9 +79,11 @@ real shoppers — fine for a demo.
 The `Dockerfile` bakes everything into the image: the pinned 2.0.0 CLI, the Python
 deps, every DuckDB extension, and the seeded data (`run.sh --build-only`), so a
 container needs no network at runtime and always starts from the seeded state.
-`make up RESET=1` recreates the app container to reset the demo. The two Docker
-ports (8443 site, 8444 quack) are published by the `app` service because Caddy
-shares its network namespace, which is how it reaches quack on loopback.
+`make up RESET=1` recreates the app container to reset the demo. The site and
+quack share one origin — quack's client always POSTs `/quack`, so the proxy sends
+that path to the lake and everything else to the collector — on one published
+port (8443). The proxy shares the `app` container's network namespace, which is
+how it reaches quack on loopback.
 
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
 [`uv`](https://docs.astral.sh/uv/) — `run.sh` calls `uv sync` itself, which
@@ -107,6 +111,42 @@ duckdb oltp.duckdb -f 05_extras.sql             # fts / vss / spatial / DuckPGQ
 duckdb -f 06_ducklake.sql                       # explore the live catalog: snapshots + time travel
 duckdb marts.duckdb -f 04_marts.sql             # rebuild marts after live collector.py traffic
 ```
+
+## Deploying: a Hetzner node behind a Cloudflare Tunnel
+
+`compose.prod.yaml` runs the app plus `cloudflared`. The node publishes **no ports**:
+`cloudflared` dials out to Cloudflare, which terminates TLS and sends visitors back
+through the tunnel, so the Hetzner firewall needs only SSH. (That is also what makes
+the rate limits' use of `CF-Connecting-IP` trustworthy — there is no other way to
+reach the collector.) The Dockerfile builds for x86 and ARM (CX/CPX or CAX nodes).
+
+1. **Tunnel.** Cloudflare Zero Trust → Networks → Tunnels → create a `cloudflared`
+   tunnel and copy its token. Add two *Public Hostnames* for `test.dorzey.net`, in
+   this order (`deploy/cloudflared.example.yml` has the same rules written out):
+   1. path `^/quack` → HTTP `127.0.0.1:8789` (the lake's read-only quack endpoint)
+   2. no path → HTTP `127.0.0.1:8787` (storefront, dashboard, `/collect`, `/order`)
+
+   One hostname, split by path, because quack's client always POSTs `/quack`; the
+   site and the lake share an origin, so there is no second hostname and no CORS.
+2. **Node.** Docker with the compose plugin; `git clone` this repo.
+3. **Configure and start.**
+   ```bash
+   cp .env.example .env        # set TUNNEL_TOKEN (and TEAL_DEAL_QUACK_URL if not test.dorzey.net)
+   docker compose -f compose.prod.yaml up -d --build
+   ```
+4. **Check.** `https://test.dorzey.net/` shows the shop, `/dashboard.html` fills in
+   (funnel, retention and daily activity come from the browser over `/quack`), and
+   `curl https://test.dorzey.net/config` returns `quack:test.dorzey.net:443`.
+5. **Reset** the demo (fresh seed data, empty lake) by recreating the containers —
+   both, because `cloudflared` is attached to the app's network namespace:
+   `docker compose -f compose.prod.yaml up -d --force-recreate`. A nightly cron entry
+   does this: `0 4 * * * cd /opt/teal-deal && docker compose -f compose.prod.yaml up -d --force-recreate`.
+
+Things to watch on a Cloudflare-fronted site: turn off *Rocket Loader* and *Auto Minify*
+(they rewrite scripts), and if the tracker's `POST /collect` or the dashboard's `POST
+/quack` are being challenged or blocked, check *Bot Fight Mode* and any WAF rules for
+this hostname — browsers can't solve a challenge on a background POST. The dashboard
+downloads ~45 MB of wasm from jsDelivr on first load, not through Cloudflare.
 
 ## The tiers
 

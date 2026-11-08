@@ -35,7 +35,7 @@ public: teal_deal_catalog.ducklake  ## serve via TLS proxy, quack read-only (nee
 	@echo "site  https://$(HOST):8443   dashboard https://$(HOST):8443/dashboard.html"
 	@echo "open it with: make browser   (or see deploy/Caddyfile.local)"
 	trap 'docker rm -f $(CADDY) >/dev/null 2>&1' EXIT; \
-	TEAL_DEAL_PUBLIC=1 TEAL_DEAL_QUACK_URL=quack:$(HOST):8444 uv run collector.py
+	TEAL_DEAL_PUBLIC=1 TEAL_DEAL_QUACK_URL=quack:$(HOST):8443 uv run collector.py
 
 up:  ## build the image, run app + TLS proxy in containers (any OS; RESET=1 = fresh data)
 	docker compose up -d --build $(if $(RESET),--force-recreate)

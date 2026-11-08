@@ -58,6 +58,13 @@ QUACK_OLTP_PORT = 8790
 # not served over quack at all. TEAL_DEAL_QUACK_URL is what the dashboard attaches
 # to (the proxy's public address); /config hands it to the browser.
 PUBLIC_MODE    = os.environ.get("TEAL_DEAL_PUBLIC") == "1"
+# Which header carries the visitor's IP, for the rate limits. It must be one the
+# proxy sets itself, because a client can send any header it likes:
+#   Caddy:       X-Forwarded-For   (Caddy replaces a client-supplied value)
+#   Cloudflare:  CF-Connecting-IP  (X-Forwarded-For is NOT safe there: Cloudflare
+#                                   appends to whatever the client sent)
+# Only safe while the proxy is the sole way in (no published ports).
+CLIENT_IP_HEADER = os.environ.get("TEAL_DEAL_CLIENT_IP_HEADER", "X-Forwarded-For")
 QUACK_PUBLIC_URL = os.environ.get("TEAL_DEAL_QUACK_URL", f"quack:localhost:{QUACK_LAKE_PORT}")
 
 # ---- the single writer, twice over: oltp.duckdb and the DuckLake catalog ---
@@ -91,7 +98,7 @@ def _oltp():
                 con.execute("INSTALL quack")
                 con.execute("LOAD quack")
                 con.execute(
-                    f"SELECT * FROM quack_serve('quack://localhost:{QUACK_OLTP_PORT}', "
+                    f"SELECT * FROM quack_serve('quack://127.0.0.1:{QUACK_OLTP_PORT}', "
                     f"token := '{QUACK_TOKEN}', disable_ssl := true)"
                 )
                 print(f"[collector] oltp.duckdb reachable via "
@@ -118,7 +125,7 @@ def _lake():
             con.execute("INSTALL quack")
             con.execute("LOAD quack")
             con.execute(
-                f"SELECT * FROM quack_serve('quack://localhost:{QUACK_LAKE_PORT}', "
+                f"SELECT * FROM quack_serve('quack://127.0.0.1:{QUACK_LAKE_PORT}', "   # IPv4 loopback: no IPv6 literals in proxy configs
                 f"token := '{QUACK_TOKEN}', disable_ssl := true)"
             )
             print(f"[collector] the DuckLake catalog reachable via "
@@ -525,12 +532,13 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*a, directory=PUBLIC, **k)
 
     def _client_ip(self):
-        """The visitor's address. Behind the TLS proxy every connection arrives
-        from loopback, so in public mode trust X-Forwarded-For from a loopback
-        peer — Caddy overwrites any value a client sends with the real one."""
+        """The visitor's address. Behind a proxy or tunnel every connection
+        arrives from loopback, so in public mode take it from a header the proxy
+        sets (CLIENT_IP_HEADER) — but only from a loopback peer, i.e. only when
+        the request really came through the proxy."""
         peer = self.client_address[0]
         if PUBLIC_MODE and peer in ("127.0.0.1", "::1"):
-            forwarded = self.headers.get("X-Forwarded-For", "")
+            forwarded = self.headers.get(CLIENT_IP_HEADER, "")
             if forwarded:
                 return forwarded.split(",")[0].strip()
         return peer

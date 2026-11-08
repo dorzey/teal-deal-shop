@@ -1,0 +1,38 @@
+# The public deployment: the app behind a Cloudflare Tunnel (one Hetzner node,
+# https://test.dorzey.net).
+#
+#   cp .env.example .env              # put the tunnel token in it
+#   docker compose -f compose.prod.yaml up -d --build
+#
+# No ports are published. cloudflared dials OUT to Cloudflare, which terminates
+# TLS and sends visitors back through the tunnel, so the node needs no inbound
+# port at all (leave only SSH open in the Hetzner firewall). That is also what
+# makes trusting CF-Connecting-IP for the rate limits safe: there is no other way
+# to reach the collector. cloudflared shares the app's network namespace so it can
+# reach the collector and quack on loopback. Tunnel ingress: deploy/cloudflared.example.yml.
+#
+# Reset the demo (fresh seed data, empty lake) — recreates both containers, which
+# they need, since cloudflared is attached to the app's network namespace:
+#   docker compose -f compose.prod.yaml up -d --force-recreate
+name: teal-deal-prod
+
+services:
+  app:
+    build: .
+    environment:
+      # where the dashboard's browser attaches to quack: the tunnel's public address
+      TEAL_DEAL_QUACK_URL: ${TEAL_DEAL_QUACK_URL:-quack:test.dorzey.net:443}
+      # Cloudflare sets this itself; X-Forwarded-For would be spoofable here
+      TEAL_DEAL_CLIENT_IP_HEADER: CF-Connecting-IP
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    network_mode: "service:app"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped

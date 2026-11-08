@@ -10,6 +10,9 @@ public/catalog.parquet
 *.ducklake.wal
 lakehouse_data/
 
+# Deployment secrets (see .env.example)
+.env
+
 # Python
 __pycache__/
 *.pyc

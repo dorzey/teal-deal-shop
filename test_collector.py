@@ -102,6 +102,43 @@ class RateLimiter(unittest.TestCase):
         self.assertEqual(rl.allow("k", 6000, 2), 0)
 
 
+class ClientIp(unittest.TestCase):
+    """_client_ip feeds the rate limits, so spoofing it defeats them."""
+
+    @staticmethod
+    def request(peer, **headers):
+        from http.client import HTTPMessage
+        from types import SimpleNamespace
+        msg = HTTPMessage()
+        for k, v in headers.items():
+            msg[k.replace("_", "-")] = v
+        return SimpleNamespace(client_address=(peer, 40000), headers=msg)
+
+    def ip(self, req, public=True, header="X-Forwarded-For"):
+        from unittest import mock
+        with mock.patch.object(c, "PUBLIC_MODE", public), mock.patch.object(c, "CLIENT_IP_HEADER", header):
+            return c.Handler._client_ip(req)
+
+    def test_behind_cloudflare_the_cf_header_wins_and_a_spoofed_xff_is_ignored(self):
+        req = self.request("127.0.0.1", CF_Connecting_IP="203.0.113.9", X_Forwarded_For="6.6.6.6, 203.0.113.9")
+        self.assertEqual(self.ip(req, header="CF-Connecting-IP"), "203.0.113.9")
+
+    def test_behind_caddy_xff_is_used(self):
+        req = self.request("::1", X_Forwarded_For="198.51.100.4")
+        self.assertEqual(self.ip(req), "198.51.100.4")
+
+    def test_a_missing_header_falls_back_to_the_peer(self):
+        self.assertEqual(self.ip(self.request("127.0.0.1"), header="CF-Connecting-IP"), "127.0.0.1")
+
+    def test_the_header_is_ignored_unless_the_peer_is_the_proxy_on_loopback(self):
+        req = self.request("192.0.2.50", X_Forwarded_For="1.2.3.4")
+        self.assertEqual(self.ip(req), "192.0.2.50")
+
+    def test_outside_public_mode_the_header_is_ignored(self):
+        req = self.request("127.0.0.1", X_Forwarded_For="1.2.3.4")
+        self.assertEqual(self.ip(req, public=False), "127.0.0.1")
+
+
 class Restock(unittest.TestCase):
     """The inventory triggers from 01_seed.sql, exercised through place_order."""
 
