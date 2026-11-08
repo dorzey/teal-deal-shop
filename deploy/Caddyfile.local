@@ -1,0 +1,32 @@
+# Local rehearsal of the public deployment: TLS in front of the collector, on ONE
+# origin. quack's client always POSTs to /quack, so the site and the lake's quack
+# endpoint share a hostname and a port, split by path — the same shape the
+# Cloudflare tunnel gives in production (see compose.prod.yaml). No second
+# hostname, no CORS.
+#
+#   docker run -d --name teal-deal-caddy --network host \
+#     -v $PWD/deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro caddy:2
+#   TEAL_DEAL_PUBLIC=1 TEAL_DEAL_QUACK_URL=quack:teal-deal.test:8443 uv run collector.py
+#   chromium --host-resolver-rules="MAP teal-deal.test 127.0.0.1" \
+#            --ignore-certificate-errors https://teal-deal.test:8443/dashboard.html
+#
+# (`make public` / `make up` do all of this.) `tls internal` uses Caddy's own CA,
+# hence the browser flag; a real deployment lets the edge provide the certificate.
+{
+	local_certs
+	skip_install_trust
+	auto_https disable_redirects
+	admin off
+}
+
+teal-deal.test:8443 {
+	tls internal
+
+	handle /quack* {
+		reverse_proxy 127.0.0.1:8789
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
+}

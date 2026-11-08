@@ -41,6 +41,50 @@ Ctrl-C stops it (flushes cleanly on exit). Re-running `./run.sh` is always
 safe — it stops whatever server a previous run left up before rebuilding, so
 you never get a "port already in use" error.
 
+A `Makefile` wraps the common tasks (`make help` lists them):
+
+```bash
+make run        # same as ./run.sh
+make build      # rebuild the data, don't serve        (./run.sh --build-only)
+make serve      # serve what's already built
+make public     # serve behind a local TLS proxy with the lake's quack endpoint read-only
+make up         # same, but app + proxy both in containers (docker compose)
+make down       # remove the containers
+make browser    # open the public-mode dashboard in a throwaway browser profile
+make check      # confirm the public quack endpoint refuses writes
+make stop       # stop the collector, containers and throwaway browser
+```
+
+`make public` and `make up` are the local rehearsal of a public deployment.
+Caddy (see `deploy/Caddyfile.local`) terminates TLS for `teal-deal.test`, and
+`TEAL_DEAL_PUBLIC=1` makes the collector refuse every quack write and file read,
+so the page's quack token being public is harmless. `make public` runs the
+collector natively next to a Caddy container (Linux only: Docker host networking);
+`make up` runs both in containers and works anywhere Docker does.
+
+**Abuse limits** (always on, `collector.py`): `/collect` and `/order` — the two
+endpoints that write — have per-IP and global token-bucket rate limits (429 with
+`Retry-After`), a 16 KB body cap, and strict validation: only the tracker's event
+types, integer ids, at most 20 events per request, orders of 1–10 of a product
+(a negative quantity would otherwise add stock). The read endpoints are limited
+too. Behind the proxy the client IP comes from a header the proxy sets
+(`TEAL_DEAL_CLIENT_IP_HEADER`: `X-Forwarded-For` for Caddy, which overwrites it;
+`CF-Connecting-IP` behind Cloudflare, where `X-Forwarded-For` can be spoofed), so
+the limits can't be dodged by lying about your address. Limits live in the `LIMITS` table at the top
+of the abuse section; `make test` covers them. Not covered: queries sent straight
+to the read-only quack endpoint (only `quack_server_max_connections` caps those),
+and a distributed flood can still use up the global order limit and lock out
+real shoppers — fine for a demo.
+
+The `Dockerfile` bakes everything into the image: the pinned 2.0.0 CLI, the Python
+deps, every DuckDB extension, and the seeded data (`run.sh --build-only`), so a
+container needs no network at runtime and always starts from the seeded state.
+`make up RESET=1` recreates the app container to reset the demo. The site and
+quack share one origin — quack's client always POSTs `/quack`, so the proxy sends
+that path to the lake and everything else to the collector — on one published
+port (8443). The proxy shares the `app` container's network namespace, which is
+how it reaches quack on loopback.
+
 Needs the `duckdb` CLI on your PATH (or `DUCKDB=/path/to/duckdb ./run.sh`) and
 [`uv`](https://docs.astral.sh/uv/) — `run.sh` calls `uv sync` itself, which
 installs the pinned `duckdb==2.0.0` into `.venv` for `collector.py`. The CLI
@@ -68,6 +112,42 @@ duckdb -f 06_ducklake.sql                       # explore the live catalog: snap
 duckdb marts.duckdb -f 04_marts.sql             # rebuild marts after live collector.py traffic
 ```
 
+## Deploying: a Hetzner node behind a Cloudflare Tunnel
+
+`compose.prod.yaml` runs the app plus `cloudflared`. The node publishes **no ports**:
+`cloudflared` dials out to Cloudflare, which terminates TLS and sends visitors back
+through the tunnel, so the Hetzner firewall needs only SSH. (That is also what makes
+the rate limits' use of `CF-Connecting-IP` trustworthy — there is no other way to
+reach the collector.) The Dockerfile builds for x86 and ARM (CX/CPX or CAX nodes).
+
+1. **Tunnel.** Cloudflare Zero Trust → Networks → Tunnels → create a `cloudflared`
+   tunnel and copy its token. Add two *Public Hostnames* for `tealdeal.dorzey.net`, in
+   this order (`deploy/cloudflared.example.yml` has the same rules written out):
+   1. path `^/quack` → HTTP `127.0.0.1:8789` (the lake's read-only quack endpoint)
+   2. no path → HTTP `127.0.0.1:8787` (storefront, dashboard, `/collect`, `/order`)
+
+   One hostname, split by path, because quack's client always POSTs `/quack`; the
+   site and the lake share an origin, so there is no second hostname and no CORS.
+2. **Node.** Docker with the compose plugin; `git clone` this repo.
+3. **Configure and start.**
+   ```bash
+   cp .env.example .env        # set TUNNEL_TOKEN (and TEAL_DEAL_QUACK_URL if not tealdeal.dorzey.net)
+   docker compose -f compose.prod.yaml up -d --build
+   ```
+4. **Check.** `https://tealdeal.dorzey.net/` shows the shop, `/dashboard.html` fills in
+   (funnel, retention and daily activity come from the browser over `/quack`), and
+   `curl https://tealdeal.dorzey.net/config` returns `quack:tealdeal.dorzey.net:443`.
+5. **Reset** the demo (fresh seed data, empty lake) by recreating the containers —
+   both, because `cloudflared` is attached to the app's network namespace:
+   `docker compose -f compose.prod.yaml up -d --force-recreate`. A nightly cron entry
+   does this: `0 4 * * * cd /opt/teal-deal && docker compose -f compose.prod.yaml up -d --force-recreate`.
+
+Things to watch on a Cloudflare-fronted site: turn off *Rocket Loader* and *Auto Minify*
+(they rewrite scripts), and if the tracker's `POST /collect` or the dashboard's `POST
+/quack` are being challenged or blocked, check *Bot Fight Mode* and any WAF rules for
+this hostname — browsers can't solve a challenge on a background POST. The dashboard
+downloads ~45 MB of wasm from jsDelivr on first load, not through Cloudflare.
+
 ## The tiers
 
 **`01_seed.sql` · `02_oltp.sql` — transactional (the "wrong tool" corner).**
@@ -78,6 +158,17 @@ pessimistic row lock would do elsewhere — try to oversell and the whole
 transaction rolls back. DuckDB is single-writer, so the honest way to run an
 app on it is to funnel every write through **one serializing process** holding
 the sole write connection; readers use separate read-only connections.
+
+Two DuckDB 2.0 **triggers** keep the stock honest, in the database rather than in
+`collector.py`, so every writer gets them. `trg_stock_audit` logs each inventory
+change to `stock_audit`. `trg_restock` is the demo's self-healing: when an order
+leaves a product under 5 it is topped back up to 40 (a "supplier delivery") inside
+the same transaction, so a public demo can't sell itself empty. Two limits shaped
+it: a trigger can't update its own table ("recursive trigger chains are not yet
+supported"), so it hangs off `order_items` rather than `inventory`; and triggers
+live inside one database, so they can't reset the DuckLake events or the whole
+demo — for that, recreate the container (`make up RESET=1`). `02_oltp.sql` shows
+the restock happening.
 
 **`03_lake.sql` — web analytics.** A tracker's `pageview` / `add_to_cart` /
 `purchase` events land directly in a **DuckLake catalog** (not a bare Parquet
@@ -133,7 +224,7 @@ that need `oltp.duckdb`; the dashboard doesn't attach to it yet). Until the in-b
 connection finishes instantiating, or if a live query fails, those three
 cards show a "waiting for the live Quack connection…" placeholder instead of
 stale or re-fetched data. Uses Query Farm's Haybarn build,
-`@haybarn/haybarn-wasm@2.0.0-rc7` (from jsDelivr): the first published wasm build
+`@haybarn/haybarn-wasm@2.0.0-rc12` (from jsDelivr): the first published wasm build
 on the DuckDB 2.0 engine whose quack extension can `ATTACH` to a 2.0 server —
 `@duckdb/duckdb-wasm` is still 1.5.x and speaks an older quack protocol. Only the
 threaded variant works (quack needs real threads), so the collector serves

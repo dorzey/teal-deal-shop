@@ -48,6 +48,27 @@ ORDER BY oi.product_id;
 -- ---- The trigger on inventory (see 01_seed.sql) logged both decrements -----
 SELECT product_id, old_stock, new_stock FROM stock_audit ORDER BY changed_at, product_id;
 
+-- ---- Auto-restock: the trigger on order_items (see 01_seed.sql) --------------
+-- Order 2 of whichever product has the least stock. It drops under 5, and the
+-- trigger tops it back up to 40 inside the same transaction. ($name reads a
+-- variable — DuckDB 2.0 shorthand for getvariable('name').)
+SET VARIABLE low_product = (SELECT product_id FROM inventory ORDER BY stock, product_id LIMIT 1);
+SET VARIABLE low_before  = (SELECT stock FROM inventory WHERE product_id = getvariable('low_product'));
+
+BEGIN TRANSACTION;
+    INSERT INTO orders (user_id) VALUES (7);
+    UPDATE inventory SET stock = stock - 2 WHERE product_id = $low_product;
+    INSERT INTO order_items (order_id, product_id, qty, price_cents)
+    SELECT currval('order_seq'), product_id, 2, price_cents FROM products WHERE product_id = $low_product;
+COMMIT;
+
+SELECT $low_product AS product_id, $low_before AS stock_before, stock AS stock_after,
+       'ordered 2, then restocked' AS what
+FROM inventory WHERE product_id = $low_product;
+-- stock_audit shows both steps: the order's decrement, then the delivery
+SELECT product_id, old_stock, new_stock FROM stock_audit
+WHERE product_id = $low_product ORDER BY changed_at;
+
 -- ---- The oversell case ------------------------------------------------------
 -- Uncomment to watch the CHECK fire and abort the transaction:
 --
