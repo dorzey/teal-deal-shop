@@ -1,0 +1,86 @@
+/* X-ray mode (see xray.js), shared by the storefront and the dashboard.
+   Everything below is inert until <body class="xray">. */
+
+/* the toggle: looks like the header's other pills; lit up when on */
+button.xraybtn{cursor:pointer;appearance:none}
+.xraybtn[aria-pressed="true"]{background:#07202a;color:#9fe8ff;border-color:#2b8fb0}
+
+/* legend under the header */
+.xraybar{
+  display:none;margin:0 0 16px;padding:12px 16px;border-radius:var(--radius);
+  background:#07202a;color:#9fc3d0;border:1px solid #1d5568;
+  box-shadow:0 0 0 1px rgba(90,209,255,.12),0 8px 24px rgba(5,30,40,.22);
+}
+body.xray .xraybar{display:block}
+.xraybar-title{
+  font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;color:#5fb7d1;
+}
+.xraybar ul{
+  list-style:none;margin:10px 0 0;padding:0;display:grid;gap:10px 22px;
+  grid-template-columns:repeat(auto-fill,minmax(250px,1fr));
+}
+.xraybar li{font-size:12.5px;line-height:1.45}
+.xraybar li a:not(.xchip){color:#7fe0ff}
+.xchips{display:inline-flex;gap:4px;flex-wrap:wrap;margin-right:4px;vertical-align:baseline}
+
+/* the small labels beside each feature */
+.xtag{display:none;flex-wrap:wrap;gap:5px}
+body.xray .xtag{display:flex}
+.xchip{
+  display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;
+  font-family:'JetBrains Mono',monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;
+  background:#07202a;color:#7fe0ff;border:1px solid #1d5568;text-decoration:none;
+}
+a.xchip::after{content:'↗';opacity:.7}
+a.xchip:hover,a.xchip:focus-visible{border-color:#5ad1ff;color:#c9f4ff}
+.xchip.dim{color:#7fa4b2;border-color:#16424f}
+.xchip.warn{color:#ffd37a;border-color:#7a5a1d}
+/* where the pages put them */
+.controls .xtag{margin-top:-4px}
+.card .xtag{margin-top:2px}
+.ppgroup .xtag{margin:4px 0 2px}
+.cartfoot + .xtag,.cartpanel .xtag{margin-top:10px}
+.tile .xtag,.card .sub + .xtag{margin-top:8px}
+
+/* a tag on each live-query row */
+.qtag{
+  display:none;flex:none;min-width:70px;text-align:center;font-family:'JetBrains Mono',monospace;
+  font-size:10.5px;color:#7fe0ff;border:1px solid #1d5568;border-radius:999px;padding:0 7px;align-self:center;
+}
+body.xray .qtag{display:inline-block}
+.qtag.none{visibility:hidden}
+
+/* the ducks. The plate is dark; the painted duck is inverted and tinted into a
+   dim negative; the skeleton (ducks.svg#skeleton) glows on top; a scan line
+   sweeps across when X-ray is switched on. */
+/* isolation: keeps the plate's z-indexed overlays from painting over the fixed drawer */
+.duckwrap{position:relative;isolation:isolate;height:84px;margin:-2px 0 2px;border-radius:10px;overflow:hidden}
+.duckwrap .duck{position:absolute;inset:0;display:block;width:100%;height:100%;margin:0}
+.duckwrap .bones{
+  opacity:0;transition:opacity .5s ease;color:#d2f4ff;
+  filter:drop-shadow(0 0 1.5px #5ad1ff) drop-shadow(0 0 5px rgba(90,209,255,.55));
+}
+body.xray .duckwrap{
+  background:radial-gradient(ellipse at 52% 60%,#0f4152 0%,#07222d 55%,#031018 100%);
+  box-shadow:inset 0 0 0 1px rgba(90,209,255,.28),inset 0 0 22px rgba(60,180,230,.28);
+}
+body.xray .duckwrap .art{
+  filter:grayscale(1) invert(1) sepia(1) hue-rotate(150deg) saturate(2.6) brightness(.9) contrast(1.05);
+  opacity:.5;
+}
+body.xray .duckwrap .bones{opacity:1}
+body.xray .duckwrap::before{          /* faint scan lines */
+  content:'';position:absolute;inset:0;z-index:2;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(120,220,255,.07) 0 1px,transparent 1px 3px);
+}
+body.xray .duckwrap::after{           /* the sweep, once */
+  content:'';position:absolute;inset:0;z-index:3;pointer-events:none;
+  background:linear-gradient(100deg,transparent 35%,rgba(150,235,255,.5) 50%,transparent 65%);
+  transform:translateX(-110%);animation:xraySweep 1.4s ease-out 1 forwards;
+}
+@keyframes xraySweep{to{transform:translateX(110%)}}
+
+@media (max-width:640px){
+  .xraybar ul{grid-template-columns:1fr}
+}

@@ -372,6 +372,8 @@
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
+<link rel="stylesheet" href="xray.css" />
+<script src="xray.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -381,6 +383,7 @@
       <span class="tag">Waddle you buy today?</span>
       <span class="status"><span id="dot" class="dot loading"></span><span id="statusText">waddling DuckDB into your browser…</span></span>
       <a class="navlink" href="./dashboard.html">📊 Duck HQ</a>
+      <button class="navlink xraybtn" id="xrayBtn" type="button" aria-pressed="false">🩻 X-ray</button>
       <div class="cartwrap">
         <button class="cartchip" id="cartBtn" aria-expanded="false">🦆 flock <span class="n" id="cartCount">0</span></button>
         <div class="cartpanel" id="cartPanel">
@@ -389,9 +392,12 @@
             <b id="cartTotal"><span class="quacker">Q</span>0.00</b>
             <button id="checkoutBtn" disabled>Take them home</button>
           </div>
+          <div class="xtag" data-xray="checkout"></div>
         </div>
       </div>
     </div>
+
+    <section class="xraybar" id="xrayBar" data-page="storefront" aria-label="How this page uses DuckDB"></section>
 
     <div class="controls">
       <div class="searchrow">
@@ -409,6 +415,7 @@
           </select>
         </span>
       </div>
+      <div class="xtag" data-xray="search"></div>
       <div class="facets">
         <div class="chips" id="cats"></div>
         <div class="price">
@@ -571,6 +578,7 @@ async function loadExtras() {
     await conn.query(`PRAGMA create_fts_index('catalog', 'product_id', 'name', 'description', overwrite = 1)`);
     hasFts = true;
   } catch (e) { console.warn('fts unavailable — falling back to ILIKE search', e); }
+  window.tealXray?.set({ fts: hasFts });   // so the X-ray labels say what is really running
 
   // "Ducks like this": DuckDB-WASM can load the vss extension itself —
   // INSTALL/LOAD vss and array_distance both work in-browser — so
@@ -604,6 +612,7 @@ async function loadExtras() {
     await conn.query(`DROP TABLE _buckets`);
     hasRecs = true;
   } catch (e) { console.warn('vss unavailable — recommendations disabled', e); }
+  window.tealXray?.set({ vss: hasRecs });
   if (hasFts && state.q.trim()) run();   // re-run a search typed before fts was ready
 }
 
@@ -648,7 +657,8 @@ function logQuery(sql, ms, rows) {
   const oneLine = sql.replace(/\s+/g, ' ').trim();
   const row = document.createElement('div');
   row.className = 'qrow';
-  row.innerHTML = `<pre title="${sql.replace(/"/g,'&quot;')}">${highlight(oneLine)}</pre>` +
+  row.innerHTML = (window.tealXray ? window.tealXray.tag(sql) : '') +
+    `<pre title="${sql.replace(/"/g,'&quot;')}">${highlight(oneLine)}</pre>` +
     `<span class="qms">⚡ ${ms.toFixed(2)} ms</span>` +
     `<span class="qrows">${rows} row${rows === 1 ? '' : 's'}</span>`;
   const log = $('qlog');
@@ -697,7 +707,10 @@ async function run() {
   grid.innerHTML = rows.map(r => {
     const inStock = num(r.in_stock);
     return `<div class="card">
-      <svg class="duck" role="img" aria-label="${r.name}"><use href="ducks.svg#${slug(r.name)}"/></svg>
+      <div class="duckwrap">
+        <svg class="duck art" role="img" aria-label="${r.name}"><use href="ducks.svg#${slug(r.name)}"/></svg>
+        <svg class="duck bones" aria-hidden="true"><use href="ducks.svg#skeleton"/></svg>
+      </div>
       <span class="cat">${CATEGORY_EMOJI[r.category] || ''} ${r.category}</span>
       <span class="name">${r.name}</span>
       <span class="desc">${r.description}</span>
@@ -709,7 +722,7 @@ async function run() {
         <span class="stock ${inStock?'in':'out'}">${inStock?`${num(r.stock)} left to adopt`:'flew the coop'}</span>
         <button class="cart" data-id="${num(r.product_id)}" data-name="${r.name}" data-price="${num(r.price_eur)}" ${inStock?'':'disabled'}>${inStock?'Add to flock':'Flew the coop'}</button>
       </div>
-      ${r.similar_names ? `<div class="similar"><b>🦆 Ducks like this:</b> ${r.similar_names}</div>` : ''}
+      ${r.similar_names ? `<div class="similar"><b>🦆 Ducks like this:</b> ${r.similar_names}<span class="xtag" data-xray="similar">${xr('similar')}</span></div>` : ''}
     </div>`;
   }).join('');
 }
@@ -781,8 +794,10 @@ function addToFlock(id, name, price) {
 // Own surface, not the cart: appears as a dismissible banner above the grid,
 // right where you're already looking after checkout — not tucked inside a
 // dropdown you're about to close.
-function recGroup(title, rows) {
-  return `<div class="ppgroup"><b>🦆 ${title}</b>
+const xr = key => (window.tealXray ? window.tealXray.html(key) : '');   // X-ray label markup
+
+function recGroup(title, rows, xrayKey) {
+  return `<div class="ppgroup"><b>🦆 ${title}</b><div class="xtag" data-xray="${xrayKey}">${xr(xrayKey)}</div>
     <div class="ppitems">${rows.map(r => `<div class="ppitem">
       <span class="name">${r.name}</span><span class="price">${quacker(num(r.price_eur).toFixed(2))}</span>
       <button class="miniadd" data-id="${num(r.product_id)}" data-name="${r.name}" data-price="${num(r.price_eur)}">+</button>
@@ -808,7 +823,7 @@ async function showPostPurchaseRecs(purchasedIds) {
           const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
             .toArray().map(r => r.toJSON());
           const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
-          if (ordered.length) groups.push(recGroup('Since you brought them home:', ordered));
+          if (ordered.length) groups.push(recGroup('Since you brought them home:', ordered, 'hybrid'));
         }
       }
     } catch (e) { /* hybrid picks are optional */ }
@@ -825,7 +840,7 @@ async function showPostPurchaseRecs(purchasedIds) {
         const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
           .toArray().map(r => r.toJSON());
         const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
-        if (ordered.length) groups.push(recGroup('Shoppers like you also got:', ordered));
+        if (ordered.length) groups.push(recGroup('Shoppers like you also got:', ordered, 'collab'));
       }
     }
   } catch (e) { /* personal picks are optional */ }

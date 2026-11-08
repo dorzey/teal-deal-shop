@@ -10,7 +10,7 @@ QUACK   ?= quack:localhost:8789
 TOKEN   ?= teal-deal-demo-token
 
 .DEFAULT_GOAL := help
-.PHONY: help build run serve public up down browser check stress test stop
+.PHONY: help build run serve public up down browser check stress test check-links stop
 
 help:  ## list the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-9s %s\n", $$1, $$2}'
@@ -61,6 +61,11 @@ check:  ## confirm the quack endpoint refuses writes (alongside `make public` or
 
 stress:  ## concurrent-writer test (plain mode only; public mode refuses writes)
 	uv run 07_stress.py --workers 8 --duration 10
+
+check-links:  ## request every outbound link in X-ray mode (public/xray.js); run before deploying
+	@fail=0; for url in $$(grep -o "'https\?://[^']*'" public/xray.js | tr -d "'" | sort -u); do \
+	  code=$$(curl -s -o /dev/null -L -m 20 -w '%{http_code}' "$$url"); \
+	  echo "$$code  $$url"; [ "$$code" = 200 ] || fail=1; done; exit $$fail
 
 test:  ## unit tests: request validation and rate limits (no build or network needed)
 	uv run python -m unittest
