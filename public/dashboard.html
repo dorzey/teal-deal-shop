@@ -57,7 +57,7 @@
     font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);
     display:flex;align-items:center;gap:8px;margin-top:4px;
   }
-  .dot{width:8px;height:8px;border-radius:50%;background:#C7CF45}
+  .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#C7CF45}
   .dot.ready{background:var(--teal)}
   .dot.loading{background:var(--accent);animation:pulse 1s infinite}
   @keyframes pulse{50%{opacity:.35}}
@@ -87,6 +87,13 @@
   /* chart cards */
   .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media (max-width:860px){.cards{grid-template-columns:1fr}}
+  /* phones: the four stat tiles as a 2x2 grid instead of four tall rows */
+  @media (max-width:640px){
+    header{padding:22px 0 12px}
+    .tiles{grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}
+    .tile{padding:12px 14px}
+    .tile .value{font-size:22px}
+  }
   .card{
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
     box-shadow:var(--shadow);padding:18px;margin-bottom:16px;
