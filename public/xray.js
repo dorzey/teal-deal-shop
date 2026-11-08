@@ -34,7 +34,7 @@
   // The labels beside each feature: [data-xray="key"] placeholders.
   const TAGS = {
     search:   s => link('wasm', 'DuckDB-Wasm') + link('parquet', 'parquet') + ftsChip(s),
-    similar:  () => link('vss', 'vss · array_distance'),
+    similar:  () => link('vss', 'vss') + link('nearest', 'NEAREST join'),
     hybrid:   () => link('duckpgq', 'DuckPGQ') + link('nearest', 'NEAREST join') + plain('server-side', 'dim'),
     collab:   () => plain('plain SQL on oltp.duckdb') + plain('server-side', 'dim'),
     checkout: () => plain('oltp.duckdb') + plain('transaction') + link('triggers', 'triggers'),
@@ -45,11 +45,13 @@
   // The legend under the header: [chip, what it does here].
   const BAR = {
     storefront: s => [
-      [link('wasm', 'DuckDB-Wasm'), 'runs in your browser. Search, filters and sorting are SQL over the catalog.'],
+      [link('wasm', 'DuckDB-Wasm') + link('haybarn', 'Haybarn build'),
+        'DuckDB 2.0 running in your browser. Search, filters and sorting are SQL over the catalog.'],
       [link('parquet', 'Parquet'), 'the 60-duck catalog is a Parquet file the browser queries directly.'],
       [ftsChip(s), s.fts === false ? 'could not load, so search falls back to a plain substring match.'
                                    : 'ranked text search over names and descriptions.'],
-      [link('vss', 'vss'), '“Ducks like this”: the nearest ducks by vector distance, in your browser.'],
+      [link('vss', 'vss') + link('nearest', 'NEAREST'),
+        '“Ducks like this”: each duck’s nearest neighbours by vector distance, found once in your browser with a NEAREST join.'],
       [link('duckpgq', 'DuckPGQ') + link('nearest', 'NEAREST'), '“Since you brought them home”: a co-purchase graph walk plus similarity, server-side.'],
       [link('triggers', 'Triggers'), 'checkout is a SQL transaction on oltp.duckdb; triggers audit stock and top up the shelves.'],
       [link('ducklake', 'DuckLake'), 'everything you click is tracked into a lake — watch it on <a href="./dashboard.html">Duck HQ</a>.'],
@@ -67,7 +69,7 @@
   // Tag for a live-query row, by what the SQL is doing.
   const RULES = [
     [/match_bm25|fts_main_|create_fts_index/i, 'fts'],
-    [/array_distance|array_cosine|product_vectors|_tokens|_buckets|hnsw/i, 'vss'],
+    [/array_distance|array_cosine|product_vectors|product_neighbors|_tokens|_buckets|hnsw|\bnearest\b/i, 'vss'],
     [/read_parquet|\.parquet/i, 'parquet'],
     [/^\s*(install|load)\b/i, 'extension'],
   ];
