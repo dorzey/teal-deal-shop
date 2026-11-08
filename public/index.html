@@ -525,6 +525,21 @@ function burstFeathers() {
 }
 
 // ---- boot DuckDB-WASM ----
+const STOCK_POLL_MS = 4000;
+// Pull live inventory from the collector into the local catalog table.
+// Resolves true if any stock value changed (so the caller can re-render).
+async function refreshStock() {
+  const res = await fetch('/stock', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`/stock HTTP ${res.status}`);
+  const { stock } = await res.json();
+  const vals = Object.entries(stock).map(([id, n]) => `(${+id}, ${+n})`).join(',');
+  if (!vals) return false;
+  const before = (await conn.query(`SELECT sum(stock * product_id) AS h FROM catalog`)).toArray()[0].h;
+  await conn.query(`UPDATE catalog SET stock = v.s, in_stock = v.s > 0 FROM (VALUES ${vals}) v(id, s) WHERE catalog.product_id = v.id`);
+  const after = (await conn.query(`SELECT sum(stock * product_id) AS h FROM catalog`)).toArray()[0].h;
+  return num(before) !== num(after);
+}
+
 async function boot() {
   const bundles = duckdb.getJsDelivrBundles();
   const bundle = await duckdb.selectBundle(bundles);
@@ -553,13 +568,17 @@ async function boot() {
   if (!resp.ok) throw new Error('catalog.parquet not found — serve this folder over HTTP');
   const buf = new Uint8Array(await resp.arrayBuffer());
   await db.registerFileBuffer('catalog.parquet', buf);
-  await conn.query(`CREATE TABLE catalog AS SELECT * FROM read_parquet('catalog.parquet')`);
+  // Stock is deliberately not in the parquet: it's live in oltp's inventory,
+  // served by /stock and polled below. Columns start empty until the first poll.
+  await conn.query(`CREATE TABLE catalog AS SELECT *, 0::INTEGER AS stock, false AS in_stock FROM read_parquet('catalog.parquet')`);
+  await refreshStock();
 
   const n = (await conn.query(`SELECT count(*) AS n FROM catalog`)).toArray()[0].n;
   $('dot').className = 'dot ready';
   $('statusText').textContent = `${n} ducks bobbing · DuckDB in-browser`;
   $('grid').removeAttribute('aria-busy');
   run();
+  setInterval(() => { if (!document.hidden) refreshStock().then(c => c && run()).catch(() => {}); }, STOCK_POLL_MS);
   loadExtras();   // not awaited: the store is usable before fts/vss finish
 }
 
@@ -871,17 +890,12 @@ async function placeOrder() {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
     const total = [...cart.values()].reduce((s, it) => s + it.qty * it.price_eur, 0);
-    // catalog.parquet is a static snapshot -> reflect the real stock drop locally.
-    for (const it of items) {
-      const row = (await conn.query(`SELECT stock FROM catalog WHERE product_id = ${it.product_id}`)).toArray()[0];
-      const newStock = Math.max(0, num(row.stock) - it.qty);
-      await conn.query(`UPDATE catalog SET stock = ${newStock}, in_stock = ${newStock > 0} WHERE product_id = ${it.product_id}`);
-    }
     cart.clear(); renderCart();
     setCartOpen(false);
     mascotMood('party'); burstFeathers();
     showToast(`🦆 Taken home — order #${data.order_id}, ${quacker(total.toFixed(2))}. Waddle safe!`);
     showPostPurchaseRecs(items.map(it => it.product_id));
+    await refreshStock().catch(() => {});
     run();
   } catch (err) {
     mascotMood('upset', 'QUACK?!');
