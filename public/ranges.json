@@ -1,0 +1,361 @@
+{
+ "note": "Rough, hand-drawn ranges for fun. Not a field guide.",
+ "regions": {
+  "North America": "POLYGON((-168 66, -141 70, -95 72, -62 60, -52 47, -70 42, -81 25, -80 9, -92 14, -106 20, -118 31, -125 42, -130 55, -168 66))",
+  "South America": "POLYGON((-80 1, -72 12, -60 10, -50 0, -35 -6, -40 -22, -53 -34, -62 -40, -68 -55, -75 -50, -72 -30, -81 -6, -80 1))",
+  "Europe": "POLYGON((-12 36, -10 44, -5 50, -8 58, 5 71, 30 71, 45 60, 45 41, 28 36, -12 36))",
+  "Africa": "POLYGON((-18 15, -17 21, -6 36, 10 37, 33 31, 43 12, 51 12, 40 -15, 35 -25, 27 -34, 18 -35, 12 -18, 9 4, -8 4, -18 15))",
+  "Asia": "POLYGON((45 41, 45 60, 60 72, 110 78, 180 70, 180 52, 150 46, 143 32, 130 30, 122 22, 108 8, 98 6, 90 22, 78 8, 66 22, 55 26, 45 30, 45 41))",
+  "Australasia": "MULTIPOLYGON(((112 -22, 122 -17, 136 -12, 142 -10, 154 -26, 153 -38, 146 -44, 138 -35, 115 -35, 112 -22)), ((166 -34, 179 -34, 179 -47, 166 -47, 166 -34)))",
+  "Hawaii": "POLYGON((-161 18, -154 18, -154 23, -161 23, -161 18))"
+ },
+ "cities": [
+  {
+   "name": "Amsterdam",
+   "lon": 4.9,
+   "lat": 52.37,
+   "region": "Europe"
+  },
+  {
+   "name": "London",
+   "lon": -0.13,
+   "lat": 51.51,
+   "region": "Europe"
+  },
+  {
+   "name": "Paris",
+   "lon": 2.35,
+   "lat": 48.86,
+   "region": "Europe"
+  },
+  {
+   "name": "Berlin",
+   "lon": 13.4,
+   "lat": 52.52,
+   "region": "Europe"
+  },
+  {
+   "name": "New York",
+   "lon": -74.01,
+   "lat": 40.71,
+   "region": "North America"
+  },
+  {
+   "name": "Chicago",
+   "lon": -87.63,
+   "lat": 41.88,
+   "region": "North America"
+  },
+  {
+   "name": "Seattle",
+   "lon": -122.33,
+   "lat": 47.61,
+   "region": "North America"
+  },
+  {
+   "name": "Mexico City",
+   "lon": -99.13,
+   "lat": 19.43,
+   "region": "North America"
+  },
+  {
+   "name": "São Paulo",
+   "lon": -46.63,
+   "lat": -23.55,
+   "region": "South America"
+  },
+  {
+   "name": "Buenos Aires",
+   "lon": -58.38,
+   "lat": -34.6,
+   "region": "South America"
+  },
+  {
+   "name": "Cape Town",
+   "lon": 18.42,
+   "lat": -33.92,
+   "region": "Africa"
+  },
+  {
+   "name": "Nairobi",
+   "lon": 36.82,
+   "lat": -1.29,
+   "region": "Africa"
+  },
+  {
+   "name": "Delhi",
+   "lon": 77.21,
+   "lat": 28.61,
+   "region": "Asia"
+  },
+  {
+   "name": "Tokyo",
+   "lon": 139.69,
+   "lat": 35.69,
+   "region": "Asia"
+  },
+  {
+   "name": "Sydney",
+   "lon": 151.21,
+   "lat": -33.87,
+   "region": "Australasia"
+  },
+  {
+   "name": "Auckland",
+   "lon": 174.76,
+   "lat": -36.85,
+   "region": "Australasia"
+  },
+  {
+   "name": "Honolulu",
+   "lon": -157.86,
+   "lat": 21.31,
+   "region": "Hawaii"
+  }
+ ],
+ "ducks": {
+  "Mallard": [
+   "North America",
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Northern Pintail": [
+   "North America",
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Green-winged Teal": [
+   "North America",
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Blue-winged Teal": [
+   "North America",
+   "South America"
+  ],
+  "Cinnamon Teal": [
+   "North America",
+   "South America"
+  ],
+  "Gadwall": [
+   "North America",
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Eurasian Wigeon": [
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "American Wigeon": [
+   "North America"
+  ],
+  "Northern Shoveler": [
+   "North America",
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "American Black Duck": [
+   "North America"
+  ],
+  "Garganey": [
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Falcated Duck": [
+   "Asia"
+  ],
+  "Mottled Duck": [
+   "North America"
+  ],
+  "Gray Teal": [
+   "Australasia"
+  ],
+  "Pacific Black Duck": [
+   "Australasia"
+  ],
+  "Cape Teal": [
+   "Africa"
+  ],
+  "Chestnut Teal": [
+   "Australasia"
+  ],
+  "Marbled Teal": [
+   "Europe",
+   "Africa",
+   "Asia"
+  ],
+  "Laysan Duck": [
+   "Hawaii"
+  ],
+  "Hawaiian Duck": [
+   "Hawaii"
+  ],
+  "Yellow-billed Duck": [
+   "Africa"
+  ],
+  "Spot-billed Duck": [
+   "Asia"
+  ],
+  "Canvasback": [
+   "North America"
+  ],
+  "Redhead": [
+   "North America"
+  ],
+  "Ring-necked Duck": [
+   "North America"
+  ],
+  "Greater Scaup": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Lesser Scaup": [
+   "North America"
+  ],
+  "Barrow's Goldeneye": [
+   "North America"
+  ],
+  "Tufted Duck": [
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Common Pochard": [
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Ferruginous Duck": [
+   "Europe",
+   "Asia",
+   "Africa"
+  ],
+  "Southern Pochard": [
+   "South America",
+   "Africa"
+  ],
+  "Common Goldeneye": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Bufflehead": [
+   "North America"
+  ],
+  "Hooded Merganser": [
+   "North America"
+  ],
+  "Common Merganser": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Red-breasted Merganser": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Smew": [
+   "Europe",
+   "Asia"
+  ],
+  "Ruddy Duck": [
+   "North America",
+   "South America"
+  ],
+  "Common Eider": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "King Eider": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Spectacled Eider": [
+   "North America",
+   "Asia"
+  ],
+  "Steller's Eider": [
+   "Asia",
+   "North America",
+   "Europe"
+  ],
+  "Long-tailed Duck": [
+   "North America",
+   "Europe",
+   "Asia"
+  ],
+  "Harlequin Duck": [
+   "North America",
+   "Asia"
+  ],
+  "Surf Scoter": [
+   "North America"
+  ],
+  "White-winged Scoter": [
+   "North America",
+   "Asia"
+  ],
+  "Black Scoter": [
+   "North America",
+   "Asia"
+  ],
+  "Velvet Scoter": [
+   "Europe",
+   "Asia"
+  ],
+  "Common Scoter": [
+   "Europe",
+   "Asia"
+  ],
+  "Wood Duck": [
+   "North America"
+  ],
+  "Mandarin Duck": [
+   "Asia",
+   "Europe"
+  ],
+  "Muscovy Duck": [
+   "South America",
+   "North America"
+  ],
+  "Comb Duck": [
+   "Africa",
+   "Asia",
+   "South America"
+  ],
+  "Maned Duck": [
+   "Australasia"
+  ],
+  "Hartlaub's Duck": [
+   "Africa"
+  ],
+  "Brazilian Teal": [
+   "South America"
+  ],
+  "Fulvous Whistling Duck": [
+   "North America",
+   "South America",
+   "Africa",
+   "Asia"
+  ],
+  "White-faced Whistling Duck": [
+   "South America",
+   "Africa"
+  ],
+  "Black-bellied Whistling Duck": [
+   "North America",
+   "South America"
+  ]
+ }
+}
