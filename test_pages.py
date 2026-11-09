@@ -52,6 +52,7 @@ class DemoNotice(unittest.TestCase):
             with self.subTest(page=name):
                 html = page(name)
                 self.assertIn('id="demoNote"', html)
+                self.assertIn('id="demoNoteClose"', html)   # dismissable
                 self.assertIn("not a real shop", html.lower())
 
     def test_the_notice_is_styled_by_the_shared_stylesheet(self):
