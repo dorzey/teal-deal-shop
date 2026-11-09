@@ -22,7 +22,7 @@ DuckLake gives every insert a snapshot, so a periodic background call to
 ducklake_merge_adjacent_files() keeps that from turning into thousands of
 tiny files (see _compactor()) instead of the app hand-rolling file layout.
 """
-import hashlib, json, os, re, sys, threading, time, datetime as dt
+import hashlib, ipaddress, json, os, re, signal, sys, threading, time, datetime as dt
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
@@ -119,48 +119,74 @@ def _oltp():
 def _lake():
     """Opens the DuckLake catalog directly as this connection's own primary
     database and serves it over quack (see the module-level note above).
-    Best-effort: a DuckDB without the quack extension just means no remote
-    access to the lake, not a crash — same tolerance as
-    the hybrid recommender's duckpgq dependency."""
-    global _lake_con
+    Without the quack extension that just means no remote access to the lake,
+    not a crash — same tolerance as the hybrid recommender's duckpgq dependency.
+    In public mode, though, a lake that is being served must be locked down: if
+    that fails the process exits rather than leave a writable endpoint up."""
+    global _lake_con, _lake_rows, _next_id
     if _lake_con is None:
         con = duckdb.connect(f"ducklake:{DUCKLAKE_CATALOG}")
+        serving = False
         try:
             con.execute("INSTALL quack")
             con.execute("LOAD quack")
+            if PUBLIC_MODE:
+                _lock_down_lake(con)          # before serving, so there is no unguarded window
             con.execute(
                 f"SELECT * FROM quack_serve('quack://127.0.0.1:{QUACK_LAKE_PORT}', "   # IPv4 loopback: no IPv6 literals in proxy configs
                 f"token := '{QUACK_TOKEN}', disable_ssl := true)"
             )
+            serving = True
             print(f"[collector] the DuckLake catalog reachable via "
                   f"quack:localhost:{QUACK_LAKE_PORT} (token {QUACK_TOKEN})", flush=True)
             if PUBLIC_MODE:
-                _lock_down_lake(con)
+                con.execute("SET enable_external_access = false")   # must come after quack_serve
+                print("[collector] public mode: lake quack endpoint is read-only", flush=True)
         except Exception as e:
+            if PUBLIC_MODE and serving:
+                print(f"[collector] FATAL: could not lock down the public quack endpoint: {e}",
+                      file=sys.stderr, flush=True)
+                os._exit(1)
             print(f"[collector] quack unavailable for the DuckLake catalog: {e}", file=sys.stderr)
+        try:   # carry on from what is already in the lake (restarts, `make serve`)
+            count, top = con.execute("SELECT count(*), coalesce(max(event_id), 0) FROM events").fetchone()
+            with _lock:
+                _lake_rows, _next_id = count, max(_next_id, top + 1)
+        except Exception as e:
+            print(f"[collector] could not read the lake's event count: {e}", file=sys.stderr)
         _lake_con = con
     return _lake_con
 
+# Statement filter for the public quack endpoint (see _lock_down_lake). The allowlist is
+# the statement's first word; the deny-list rejects write and file keywords anywhere in
+# the text, plus table functions that read files or change the lake: DuckLake's
+# maintenance functions exist both as ducklake_* and as methods on the attached
+# catalog (`lake.set_option(...)`, `lake.merge_adjacent_files()`), so both are named.
+QUACK_READ_ONLY_SQL = r"""CREATE OR REPLACE MACRO quack_read_only(sid, q) AS
+    regexp_matches(q, '^\s*(?i:select|with|from|begin|commit|rollback|abort|start|end|show|describe|summarize|explain)\b')
+    AND NOT regexp_matches(q, '(?i)\b(insert|update|delete|drop|create|alter|copy|attach|detach|install|load|truncate|merge|export|import|vacuum|checkpoint|set|reset|call|pragma|glob|ducklake_\w+|set_option|merge_adjacent_files|expire_snapshots|cleanup_old_files|delete_orphaned_files|rewrite_data_files|flush_inlined_data|add_data_files|set_commit_message|read_\w+|\w+_scan|\w+_auto|sniff_csv|query\w*)\b')"""
+
 def _lock_down_lake(con):
-    """Make the lake's quack endpoint safe to publish: read queries only, and no
-    filesystem access beyond the lake's own data files.
+    """Make the lake's quack endpoint safe to publish: read queries only, bounded
+    resources, and no filesystem access beyond the lake's own data files. Call it
+    BEFORE quack_serve (then `SET enable_external_access = false` after it: quack
+    needs its crypto module at start).
 
     quack calls `quack_authorization_function(session, query)` on every query,
     including the catalog queries ATTACH itself sends (WITH/SELECT/BEGIN/COMMIT…),
-    so this is an allowlist of statement types plus a deny-list of write and
-    file-reading keywords (which also catches `WITH x AS (DELETE …)`). Crude —
-    a keyword inside a string literal is refused too — but fine for a demo.
-    enable_external_access=false must come after quack_serve (quack needs its
-    crypto module at start) and allowed_directories keeps the DuckLake data
+    so this is an allowlist of statement types plus a deny-list (QUACK_READ_ONLY_SQL;
+    it also catches `WITH x AS (DELETE …)`). Crude — a keyword inside a string literal
+    is refused too — but fine for a demo, and tested in test_collector.py.
+    memory_limit, max_temp_directory_size and threads keep one expensive visitor
+    query from starving the collector, which shares this process; allowed_directories keeps the DuckLake data
     path readable for the collector's own inserts and compaction."""
-    con.execute(r"""CREATE OR REPLACE MACRO quack_read_only(sid, q) AS
-        regexp_matches(q, '^\s*(?i:select|with|from|begin|commit|rollback|abort|start|end|show|describe|summarize|explain)\b')
-        AND NOT regexp_matches(q, '(?i)\b(insert|update|delete|drop|create|alter|copy|attach|detach|install|load|truncate|merge|export|import|vacuum|checkpoint|set|reset|call|pragma|read_csv|read_text|read_blob|read_parquet|read_json|glob)\b')""")
+    con.execute(QUACK_READ_ONLY_SQL)
     con.execute("SET quack_authorization_function = 'quack_read_only'")
     con.execute("SET quack_server_max_connections = 64")   # one per open dashboard, roughly
+    con.execute("SET memory_limit = '512MB'")
+    con.execute("SET max_temp_directory_size = '512MB'")    # a query over the memory limit spills to disk: bound that too
+    con.execute("SET threads = 2")
     con.execute("SET allowed_directories = ['lakehouse_data/']")
-    con.execute("SET enable_external_access = false")
-    print("[collector] public mode: lake quack endpoint is read-only", flush=True)
 
 def _setup_hybrid(con):
     """One-time build of the hybrid recommender's two signals: a real text
@@ -235,6 +261,13 @@ MAX_EVENTS_PER_REQUEST = 20
 MAX_BUFFER = 5000                # events waiting to flush; beyond this, shed load
 MAX_ORDER_ITEMS, MAX_ORDER_QTY = 20, 10
 MAX_PROPS_BYTES = 2048
+MAX_ID = 2**31 - 1               # user_id / product_id: far above anything real, far below overflow
+PROP_KEYS = ("path", "referrer", "device")   # the only props the tracker sends; the rest are dropped
+PROP_MAX_CHARS = 200
+MAX_LAKE_ROWS = 200_000          # the public demo's lake stops accepting events here (503)
+# Events are charged per event, not per request: a request may carry up to 20.
+EVENT_LIMIT_PER_IP = (300, 100)
+EVENT_LIMIT_GLOBAL = (3000, 600)
 EVENT_TYPES = {"pageview", "add_to_cart", "purchase"}   # what tracker.js sends
 
 class HttpError(Exception):
@@ -247,20 +280,24 @@ class RateLimiter:
     def __init__(self):
         self._buckets, self._lock, self._pruned = {}, threading.Lock(), time.monotonic()
 
-    def allow(self, key, rate, burst):
-        """Returns 0 if allowed, else the seconds to wait before retrying."""
+    @staticmethod
+    def _refilled(bucket, now):
+        tokens, then, rate, burst = bucket
+        return min(burst, tokens + (now - then) * rate / 60) >= burst
+
+    def allow(self, key, rate, burst, cost=1):
+        """Returns 0 if allowed (and spends `cost` tokens), else the seconds to wait."""
         now = time.monotonic()
         with self._lock:
-            tokens, then = self._buckets.get(key, (burst, now))
+            tokens, then, _, _ = self._buckets.get(key, (burst, now, rate, burst))
             tokens = min(burst, tokens + (now - then) * rate / 60)
-            if tokens < 1:
-                self._buckets[key] = (tokens, now)
-                return max(1, int((1 - tokens) * 60 / rate) + 1)
-            self._buckets[key] = (tokens - 1, now)
-            if now - self._pruned > 300:          # drop buckets that have refilled
+            if tokens < cost:
+                self._buckets[key] = (tokens, now, rate, burst)
+                return max(1, int((cost - tokens) * 60 / rate) + 1)
+            self._buckets[key] = (tokens - cost, now, rate, burst)
+            if now - self._pruned > 300:          # forget buckets that have refilled completely
                 self._pruned = now
-                self._buckets = {k: v for k, v in self._buckets.items()
-                                 if v[0] < burst or now - v[1] < 600}
+                self._buckets = {k: v for k, v in self._buckets.items() if not self._refilled(v, now)}
             return 0
 
 _limiter = RateLimiter()
@@ -270,15 +307,27 @@ def _int_or_none(v, name):
         return None
     if isinstance(v, bool) or not isinstance(v, int):
         raise HttpError(400, f"{name} must be an integer")
+    if abs(v) > MAX_ID:
+        raise HttpError(400, f"{name} is out of range")
+    return v
+
+def _utf8(v, name):
+    """DuckDB rejects text that isn't valid Unicode (a lone surrogate, say), and one such
+    row would fail a whole batch insert — so refuse it here."""
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise HttpError(400, f"{name} must be valid Unicode text")
     return v
 
 def _short_str(v, name, limit=64):
     if v is not None and (not isinstance(v, str) or len(v) > limit):
         raise HttpError(400, f"{name} must be a string of at most {limit} characters")
-    return v
+    return _utf8(v, name) if v is not None else v
 
 # ---- event buffering ---------------------------------------------------------
-_buf, _lock, _next_id = [], threading.Lock(), 1_000_000  # live ids start high
+_buf, _lock, _next_id = [], threading.Lock(), 1_000_000  # live ids start high (see _lake())
+_lake_rows = 0                                           # events in the lake; capped by MAX_LAKE_ROWS
 
 def _parse_ts(s):
     # tracker.js always sends a well-formed new Date().toISOString(); a
@@ -296,8 +345,8 @@ def _parse_ts(s):
 
 def _clean_event(ev):
     """Validate one tracker event and shape it into a lake row (minus event_id).
-    Everything is checked here, before anything is buffered, so a bad event can
-    never poison a whole flush batch."""
+    Everything is checked here, before anything is buffered, so a bad event does
+    not reach a flush batch (and flush() still isolates one that slips through)."""
     if not isinstance(ev, dict):
         raise HttpError(400, "event must be an object")
     event_type = ev.get("event_type") or "pageview"
@@ -307,10 +356,12 @@ def _clean_event(ev):
     props = ev.get("props") or {}
     if not isinstance(props, dict) or len(props) > 20 or any(not isinstance(k, str) for k in props):
         raise HttpError(400, "props must be an object with at most 20 keys")
-    props = dict(props)
-    props["session_id"] = _short_str(ev.get("session_id"), "session_id")
-    props_json = json.dumps(props)
-    if len(props_json) > MAX_PROPS_BYTES:
+    # Keep only what the tracker sends, each value a short string: the lake is publicly
+    # readable, so it is not a place for arbitrary visitor-supplied text or structure.
+    kept = {k: _utf8(props[k][:PROP_MAX_CHARS], k) for k in PROP_KEYS if isinstance(props.get(k), str)}
+    kept["session_id"] = _short_str(ev.get("session_id"), "session_id")
+    props_json = json.dumps(kept, ensure_ascii=False, allow_nan=False)
+    if len(props_json.encode("utf-8")) > MAX_PROPS_BYTES:
         raise HttpError(400, "props too large")
     return (_int_or_none(ev.get("user_id"), "user_id"), event_type,
             _int_or_none(ev.get("product_id"), "product_id"), ts, ts.date(), props_json)
@@ -322,6 +373,8 @@ def enqueue(ev, _clean=None):
     with _lock:
         if len(_buf) >= MAX_BUFFER:
             raise HttpError(503, "busy, try again shortly")
+        if _lake_rows + len(_buf) >= MAX_LAKE_ROWS:
+            raise HttpError(503, "the demo's lake is full for now")
         eid, _next_id = _next_id, _next_id + 1
         _buf.append((eid, *fields))
         due = len(_buf) >= BATCH
@@ -350,14 +403,39 @@ def _clean_order(payload):
     return user_id, clean
 
 def flush():
+    """Write the buffered events to the lake in one transaction. If that fails, retry
+    them one at a time and drop only the rows that fail, so one bad event never costs
+    its neighbours; this function never raises, so callers (a request handler) are safe."""
+    global _lake_rows
     with _lock:
         if not _buf:
             return
         rows, _buf[:] = list(_buf), []
-    con = _lake()
-    with _lake_lock:
-        con.executemany("INSERT INTO events VALUES (?,?,?,?,?,?,?)", rows)
-    print(f"[collector] flushed {len(rows)} event(s) to the lake", flush=True)
+    insert = "INSERT INTO events VALUES (?,?,?,?,?,?,?)"
+    stored = 0
+    try:
+        con = _lake()
+        with _lake_lock:
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.executemany(insert, rows)
+                con.execute("COMMIT")
+            except Exception:
+                con.execute("ROLLBACK")
+                raise
+        stored = len(rows)
+    except Exception as e:
+        print(f"[collector] batch insert failed ({e}); retrying row by row", file=sys.stderr, flush=True)
+        for row in rows:
+            try:
+                with _lake_lock:
+                    _lake().execute(insert, row)
+                stored += 1
+            except Exception as e2:
+                print(f"[collector] dropped a bad event: {e2}", file=sys.stderr, flush=True)
+    with _lock:
+        _lake_rows += stored
+    print(f"[collector] flushed {stored} of {len(rows)} event(s) to the lake", flush=True)
 
 def _flusher():
     while True:
@@ -405,6 +483,13 @@ def place_order(user_id, items):
             con.execute("ROLLBACK")
             raise
         return order_id
+
+def _order_error_message(e):
+    """What the storefront may tell a shopper about a refused order: an oversell (the
+    inventory CHECK constraint) is "not enough stock"; anything else is generic."""
+    if isinstance(e, duckdb.ConstraintException) and "CHECK constraint" in str(e):
+        return "not enough stock"
+    return "that order couldn't be placed"
 
 def get_stock():
     """Live inventory: {product_id: stock}. catalog.parquet deliberately has no
@@ -555,6 +640,19 @@ def version_assets(html, public=PUBLIC):
             return m.group(1)
     return ASSET_RE.sub(tag, html)
 
+def _ip_key(addr):
+    """Rate-limit key for a client address: IPv4 as is; IPv6 collapsed to its /64, since
+    one subscriber can rotate through billions of addresses inside it."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr
+    if ip.version == 6:
+        if ip.ipv4_mapped:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
 class Handler(SimpleHTTPRequestHandler):
     timeout = 15   # drop connections that stall mid-request (slowloris)
 
@@ -570,20 +668,31 @@ class Handler(SimpleHTTPRequestHandler):
         if PUBLIC_MODE and peer in ("127.0.0.1", "::1"):
             forwarded = self.headers.get(CLIENT_IP_HEADER, "")
             if forwarded:
-                return forwarded.split(",")[0].strip()
-        return peer
+                return _ip_key(forwarded.split(",")[0].strip())
+        return _ip_key(peer)
 
-    def _limited(self, route):
-        """Apply the per-client and global limits for `route`. If one is hit,
-        answers 429 with Retry-After and returns True."""
-        waits = [_limiter.allow((route, self._client_ip()), *LIMITS[route])]
-        if route in GLOBAL_LIMITS:
-            waits.append(_limiter.allow((route, "*"), *GLOBAL_LIMITS[route]))
+    def _charge(self, name, per_ip, overall=None, cost=1):
+        """Spend `cost` tokens from this client's bucket (and the global one, if any)
+        for `name`. If one is empty, answers 429 with Retry-After and returns True."""
+        waits = [_limiter.allow((name, self._client_ip()), *per_ip, cost=cost)]
+        if overall:
+            waits.append(_limiter.allow((name, "*"), *overall, cost=cost))
         wait = max(waits)
         if wait:
             self._json(429, {"error": "slow down — too many requests"}, {"Retry-After": str(wait)})
             return True
         return False
+
+    def _limited(self, route):
+        """Apply the per-client and global request limits for `route`."""
+        return self._charge(route, LIMITS[route], GLOBAL_LIMITS.get(route))
+
+    def _fail(self, status, e, message="something went wrong"):
+        """Log the real error here and give the client a generic one: DuckDB's own
+        messages can contain SQL fragments and file paths."""
+        print(f"[collector] {self.command} {urlparse(self.path).path} failed: {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+        self._json(status, {"error": message})
 
     def end_headers(self):
         # The dashboard's in-browser DuckDB needs threads (for quack), which
@@ -592,6 +701,9 @@ class Handler(SimpleHTTPRequestHandler):
         if urlparse(self.path).path == "/dashboard.html":
             self.send_header("Cross-Origin-Opener-Policy", "same-origin")
             self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         if getattr(self, "_immutable", False):
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")
         super().end_headers()
@@ -616,32 +728,39 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/recommendations":
             try:
-                qs = parse_qs(urlparse(self.path).query)
-                user_id = int(qs.get("user_id", [""])[0])
+                user_id = int(parse_qs(urlparse(self.path).query).get("user_id", [""])[0])
+                if abs(user_id) > MAX_ID:
+                    raise ValueError
+            except ValueError:
+                return self._json(400, {"error": "user_id must be an integer"})
+            try:
                 self._json(200, {"product_ids": get_recommendations(user_id)})
             except Exception as e:
-                self._json(400, {"error": str(e)})
+                self._fail(500, e)
         elif path == "/hybrid-recommendations":
             try:
                 qs = parse_qs(urlparse(self.path).query)
                 ids = [int(x) for x in qs.get("product_ids", [""])[0].split(",") if x]
-                if len(ids) > MAX_ORDER_ITEMS:
-                    raise ValueError(f"at most {MAX_ORDER_ITEMS} product_ids")
+                if len(ids) > MAX_ORDER_ITEMS or any(abs(i) > MAX_ID for i in ids):
+                    raise ValueError
+            except ValueError:
+                return self._json(400, {"error": f"product_ids must be at most {MAX_ORDER_ITEMS} integers"})
+            try:
                 self._json(200, {"product_ids": get_hybrid_recommendations(ids)})
             except Exception as e:
-                self._json(400, {"error": str(e)})
+                self._fail(500, e)
         elif path == "/config":
             self._json(200, {"quack_url": QUACK_PUBLIC_URL, "quack_token": QUACK_TOKEN})
         elif path == "/stock":
             try:
                 self._json(200, {"stock": get_stock()})
             except Exception as e:
-                self._json(500, {"error": str(e)})
+                self._fail(500, e)
         elif path == "/dashboard-data":
             try:
                 self._json(200, get_dashboard())
             except Exception as e:
-                self._json(500, {"error": str(e)})
+                self._fail(500, e)
         elif path in ("/", "/index.html", "/dashboard.html"):
             try:
                 with open(os.path.join(PUBLIC, path.lstrip("/") or "index.html"), encoding="utf-8") as f:
@@ -696,6 +815,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if len(events) > MAX_EVENTS_PER_REQUEST:
                     raise HttpError(400, f"at most {MAX_EVENTS_PER_REQUEST} events per request")
                 cleaned = [_clean_event(ev) for ev in events]   # all-or-nothing
+                if self._charge("/collect#events", EVENT_LIMIT_PER_IP, EVENT_LIMIT_GLOBAL, cost=max(1, len(cleaned))):
+                    return
                 for fields in cleaned:
                     enqueue(None, _clean=fields)
                 self.send_response(204); self.end_headers()
@@ -706,18 +827,24 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as e:      # out of stock, unknown product/user: the DB says no
                     print(f"[collector] order rejected: {e}", file=sys.stderr, flush=True)
                     # the storefront shows this in a toast; don't hand database internals to visitors
-                    self._json(409, {"error": "not enough stock" if "stock" in str(e) else "that order couldn't be placed"})
+                    self._json(409, {"error": _order_error_message(e)})
         except HttpError as e:
             self._json(e.status, {"error": str(e)})
+        except Exception as e:             # anything unforeseen: an answer, not a dropped connection
+            self._fail(500, e)
 
     def log_message(self, *a):  # keep the console quiet except for flushes
         pass
+
+def _on_sigterm(signum, frame):
+    raise KeyboardInterrupt
 
 if __name__ == "__main__":
     _oltp()  # connect (+ serve over quack) right away, so startup fails loudly, not on first request
     _lake()
     threading.Thread(target=_flusher, daemon=True).start()
     threading.Thread(target=_compactor, daemon=True).start()
+    signal.signal(signal.SIGTERM, _on_sigterm)   # `docker stop`: flush and close like Ctrl-C
     print(f"[collector] storefront + tracking on http://localhost:{PORT}/  (Ctrl-C to stop)")
     try:
         ThreadingHTTPServer(("", PORT), Handler).serve_forever()

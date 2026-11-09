@@ -13,7 +13,10 @@
      would otherwise queue up one after another. These are the URLs the Haybarn build
      of DuckDB-Wasm (DuckDB 2.0, non-threaded) requests, so they hit the cache. The
      version pin appears here, in the module script below and in dashboard.html;
-     test_pages.py checks they agree. -->
+     test_pages.py checks they agree. Chrome logs "preloaded but not used" warnings for
+     these: the consumer is the engine's worker, not the page. Checked on a cold cache:
+     each file crosses the network once (the preload) and the worker reads it from the
+     HTTP cache, so nothing is downloaded twice. -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="preconnect" href="https://haybarn-extensions.query.farm" crossorigin />
 <link rel="preload" as="fetch" crossorigin href="https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.0-rc12/dist/duckdb-base.wasm" />
@@ -31,6 +34,7 @@
   }
   *{box-sizing:border-box}
   html,body{margin:0}
+  html{overflow-x:hidden}   /* .wave is 100vw wide, which includes the vertical scrollbar's width */
   body{
     font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--bg);
     /* room for the fixed live-query drawer; --console-h is its real height (set in JS) */
@@ -171,6 +175,7 @@
     flex:1;display:flex;align-items:center;gap:10px;background:var(--bg);
     border:1px solid var(--line);border-radius:10px;padding:0 12px;
   }
+  .search:focus-within,.sort select:focus-visible,.nearsel select:focus-visible{border-color:var(--teal);box-shadow:0 0 0 3px rgba(30,122,140,.25)}
   .search svg{flex:none;color:var(--muted)}
   .search input{
     border:0;background:none;outline:none;font-size:15px;color:var(--ink);
@@ -273,7 +278,7 @@
   .card .duck{display:block;width:100%;height:84px;margin:-2px 0 2px}
   .card .name{font-family:'Fredoka',sans-serif;font-weight:500;font-size:16.5px;line-height:1.25}
   .card .desc{font-size:12.5px;color:var(--muted);line-height:1.45;flex:1}
-  .card .foot{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+  .card .foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;flex-wrap:wrap}
   .price-tag{font-family:'Fredoka',sans-serif;font-weight:700;font-size:19px}
   .rating{font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--muted)}
   .rating .star{color:var(--accent)}
@@ -395,7 +400,8 @@
   <aside class="demonote" id="demoNote" role="note">
     <span class="demotext"><b>Demo, not a real shop.</b> The ducks are made up and <b>Q</b> is quackers, not money: nothing is sold,
     charged or shipped, and it never asks for a name, address or payment. It exists to show off DuckDB —
-    your clicks are logged (a random id for this tab, no cookies) to feed the <a href="./dashboard.html">Duck HQ</a> dashboard.</span>
+    your clicks are logged (a random id for this tab, no cookies) into a log that anyone can query, which feeds the <a href="./dashboard.html">Duck HQ</a> dashboard.
+    Cloudflare, which serves the site, sees IP addresses as any host does; the demo itself doesn't store them.</span>
     <button class="democlose" id="demoNoteClose" type="button" aria-label="Dismiss this notice">✕</button>
   </aside>
   <script>try { if (sessionStorage.getItem('teal_deal_demo_note') === 'x') document.getElementById('demoNote').hidden = true; } catch {}</script>
@@ -426,10 +432,10 @@
       <div class="searchrow">
         <label class="search">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <input id="q" type="text" placeholder="Search the pond for your perfect duck…" autocomplete="off" />
+          <input id="q" type="text" aria-label="Search ducks" placeholder="Search the pond for your perfect duck…" autocomplete="off" />
         </label>
         <span class="sort">
-          <select id="sort">
+          <select id="sort" aria-label="Sort ducks">
             <option value="rating DESC">Best in show</option>
             <option value="price_eur ASC">Price: low to high</option>
             <option value="price_eur DESC">Price: high to low</option>
@@ -443,12 +449,12 @@
         <div class="chips" id="cats"></div>
         <div class="price">
           <span>≤</span>
-          <input id="maxPrice" type="range" min="5" max="50" step="1" value="50" />
+          <input id="maxPrice" type="range" aria-label="Maximum price" min="5" max="50" step="1" value="50" />
           <span class="val" id="maxPriceVal"><span class="quacker">Q</span>50</span>
         </div>
         <label class="toggle"><input id="inStock" type="checkbox" /> In stock only</label>
         <label class="nearsel">📍 Ducks near
-          <select id="near" aria-describedby="nearNote"><option value="">anywhere</option></select>
+          <select id="near"><option value="">anywhere</option></select>
         </label>
       </div>
       <div class="xtag" data-xray="near"></div>
@@ -902,9 +908,12 @@ function setCartOpen(open) {
   $('cartBtn').setAttribute('aria-expanded', String(open));
 }
 $('cartBtn').addEventListener('click', () => setCartOpen(!$('cartPanel').classList.contains('open')));
-// on a phone the flock is a sheet over the page, so tapping anywhere else dismisses it
+// tapping or clicking anywhere else dismisses the flock panel (on a phone it is a sheet over the page); so does Escape
 document.addEventListener('click', e => {
-  if (matchMedia('(max-width:640px)').matches && !e.target.closest('.cartwrap')) setCartOpen(false);
+  if (!e.target.closest('.cartwrap')) setCartOpen(false);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('cartPanel').classList.contains('open')) { setCartOpen(false); $('cartBtn').focus(); }
 });
 
 // Never let the flock hold more than is in stock: the server would 409 the
@@ -964,6 +973,7 @@ function recGroup(title, rows, xrayKey) {
 
 async function showPostPurchaseRecs(purchasedIds) {
   const groups = [];
+  const shown = new Set();   // a duck suggested in the first group is not repeated in the second
 
   // 1. Hybrid: DuckPGQ co-purchase graph (behavioral signal) fused with real
   // text-embedding similarity (content signal), server-side — see
@@ -979,6 +989,7 @@ async function showPostPurchaseRecs(purchasedIds) {
           const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
             .toArray().map(r => r.toJSON());
           const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
+          ordered.forEach(r => shown.add(num(r.product_id)));
           if (ordered.length) groups.push(recGroup('Since you brought them home:', ordered, 'hybrid'));
         }
       }
@@ -996,7 +1007,8 @@ async function showPostPurchaseRecs(purchasedIds) {
         const idl = product_ids.join(',');
         const found = (await conn.query(`SELECT product_id, name, price_eur FROM catalog WHERE product_id IN (${idl})`))
           .toArray().map(r => r.toJSON());
-        const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id)).filter(Boolean).slice(0, 3);
+        const ordered = product_ids.map(id => found.find(r => num(r.product_id) === id))
+          .filter(r => r && !shown.has(num(r.product_id))).slice(0, 3);
         if (ordered.length) groups.push(recGroup('Shoppers like you also got:', ordered, 'collab'));
       }
     }
@@ -1005,6 +1017,7 @@ async function showPostPurchaseRecs(purchasedIds) {
   if (groups.length) {
     $('ppContent').innerHTML = groups.join('');
     $('ppBanner').classList.add('show');
+    $('ppBanner').scrollIntoView({ block: 'nearest', behavior: 'smooth' });   // it sits above the grid; don't leave it off-screen
   }
 }
 
@@ -1057,7 +1070,6 @@ $('grid').addEventListener('click', e => {
 boot().catch(err => {
   $('dot').className = 'dot';
   $('statusText').textContent = 'the pond drained — see console 🦆💦';
-  $('sql').textContent = String(err);
   $('grid').removeAttribute('aria-busy');
   $('grid').innerHTML = `<div class="empty"><b>The pond drained.</b><br>DuckDB didn't start — see the console.</div>`;
   console.error(err);

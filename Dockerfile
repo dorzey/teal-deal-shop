@@ -12,7 +12,8 @@ ARG TARGETARCH
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && apt-get clean
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 # DuckDB CLI (run.sh drives the .sql files with it), pinned to the same version as
 # the Python package in pyproject.toml.

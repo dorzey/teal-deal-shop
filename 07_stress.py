@@ -16,8 +16,8 @@ genuine spike on "today," the same way real traffic would. Each row is
 tagged `props: {"stress": true, "worker": N}` so public/dashboard.html's
 pollStressWrites() can count them separately from organic traffic.
 
-    python3 07_stress.py                      # 8 workers, 10s, defaults
-    python3 07_stress.py --workers 16 --duration 5
+    uv run 07_stress.py                      # 8 workers, 10s, defaults
+    uv run 07_stress.py --workers 16 --duration 5
 
 Needs collector.py running — it's what calls quack_serve() on the DuckLake
 connection (see _lake() there).
@@ -43,7 +43,7 @@ def worker(worker_id, stop_event, counter, lock, errors):
     base_id = 900_000_000 + worker_id * 10_000_000  # cosmetically out of range of real event_ids
     n = 0
     while not stop_event.is_set():
-        now = dt.datetime.now()
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)   # UTC-naive, like the collector's timestamps
         try:
             # Inlined literals, not `?` parameters: DuckDB 2.0's quack pushdown
             # forwards the INSERT without the bound values ("Values were not
@@ -62,6 +62,7 @@ def worker(worker_id, stop_event, counter, lock, errors):
             with lock:
                 errors.append(str(e))
             break
+    con.close()
 
 
 def main():

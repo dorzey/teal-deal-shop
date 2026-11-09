@@ -12,6 +12,9 @@ services:
       TEAL_DEAL_QUACK_URL: ${TEAL_DEAL_QUACK_URL:-quack:teal-deal.test:8443}
     ports:
       - "8443:8443"   # site and /quack, one origin
+    mem_limit: 1g     # same fences as compose.prod.yaml
+    cpus: 1.5
+    pids_limit: 256
     restart: unless-stopped
 
   caddy:

@@ -62,6 +62,12 @@ check:  ## confirm the quack endpoint refuses writes (alongside `make public` or
 stress:  ## concurrent-writer test (plain mode only; public mode refuses writes)
 	uv run 07_stress.py --workers 8 --duration 10
 
+sprites:  ## regenerate public/ducks.svg (make_sprites.py)
+	python3 make_sprites.py
+
+ranges:  ## regenerate public/ranges.json (make_ranges.py)
+	python3 make_ranges.py
+
 check-links:  ## request every outbound link in X-ray mode (public/xray.js); run before deploying
 	@fail=0; for url in $$(grep -o "'https\?://[^']*'" public/xray.js | tr -d "'" | sort -u); do \
 	  code=$$(curl -s -o /dev/null -L -m 20 -w '%{http_code}' "$$url"); \
