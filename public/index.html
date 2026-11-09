@@ -197,6 +197,11 @@
   .price .val{font-family:'JetBrains Mono',monospace;color:var(--ink);min-width:52px;text-align:right}
   .toggle{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted);cursor:pointer;user-select:none}
   .toggle input{accent-color:var(--teal);width:16px;height:16px}
+  .nearsel{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted)}
+  .nearsel select{
+    font-family:inherit;font-size:13.5px;color:var(--ink);background:var(--surface);
+    border:1px solid var(--line);border-radius:10px;padding:6px 10px;outline:none;
+  }
   .spacer{flex:1}
 
   /* pond waterline divider */
@@ -208,6 +213,7 @@
   .meta{display:flex;align-items:baseline;justify-content:space-between;margin:12px 2px 12px}
   .meta .count{font-family:'Fredoka',sans-serif;font-weight:500;font-size:15px}
   .meta .count b{font-weight:700}
+  .meta .nearnote{font-family:'Inter',sans-serif;font-weight:400;font-size:12.5px;color:var(--muted)}
 
   /* post-purchase recommendation banner — its own surface, not the cart */
   .ppbanner{
@@ -343,6 +349,8 @@
     .search,.sort{flex:1 1 100%}
     .sort select{width:100%}
     .facets{gap:12px}
+    .nearsel{flex:1 1 100%}
+    .nearsel select{flex:1}
     .price{flex:1 1 100%;min-width:0}
 
     /* two compact cards per row instead of one tall one: ~half the scrolling */
@@ -439,7 +447,11 @@
           <span class="val" id="maxPriceVal"><span class="quacker">Q</span>50</span>
         </div>
         <label class="toggle"><input id="inStock" type="checkbox" /> In stock only</label>
+        <label class="nearsel">📍 Ducks near
+          <select id="near" aria-describedby="nearNote"><option value="">anywhere</option></select>
+        </label>
       </div>
+      <div class="xtag" data-xray="near"></div>
     </div>
 
     <div class="wave" aria-hidden="true">
@@ -495,7 +507,7 @@ import * as duckdb from 'https://cdn.jsdelivr.net/npm/@haybarn/haybarn-wasm@2.0.
 const $ = id => document.getElementById(id);
 const CATEGORIES = ['dabbling','diving','sea','perching'];
 const CATEGORY_EMOJI = { dabbling:'🦆', diving:'🤿', sea:'🌊', perching:'🌳' };
-const state = { q:'', cats:new Set(), maxPrice:50, inStock:false, sort:'rating DESC' };
+const state = { q:'', cats:new Set(), maxPrice:50, inStock:false, near:null, sort:'rating DESC' };
 let conn = null;
 let hasRecs = false;
 let hasFts = false;
@@ -603,6 +615,7 @@ async function boot() {
   $('grid').removeAttribute('aria-busy');
   run();
   setInterval(() => { if (!document.hidden) refreshStock().then(c => c && run()).catch(() => {}); }, STOCK_POLL_MS);
+  loadRanges();   // small JSON; fills the "Ducks near" dropdown
   loadExtras();   // not awaited: the store is usable before fts/vss finish
 }
 
@@ -698,6 +711,9 @@ function buildSQL() {
   }
   where.push(`price_eur <= ${state.maxPrice}`);
   if (state.inStock) where.push(`in_stock`);
+  if (state.near) {   // ducks whose range (a region polygon) contains the chosen place
+    where.push(`name IN (SELECT dr.name FROM duck_regions dr JOIN regions r USING (region)\n    WHERE ST_Contains(r.geom, ST_Point(${Number(state.near.lon)}, ${Number(state.near.lat)})))`);
+  }
   const clause = where.length ? `\nWHERE ${where.join('\n  AND ')}` : '';
   const simCol = hasRecs
     ? `,\n  (SELECT string_agg(name, ' · ' ORDER BY rank) FROM product_neighbors n\n   WHERE n.product_id = catalog.product_id) AS similar_names`
@@ -761,7 +777,8 @@ async function run() {
   const sql = buildSQL();
   const res = await conn.query(sql);
   const rows = res.toArray().map(r => r.toJSON());
-  $('count').innerHTML = `<b>${rows.length}</b> duck${rows.length===1?'':'s'}`;
+  $('count').innerHTML = `<b>${rows.length}</b> duck${rows.length===1?'':'s'}` +
+    (state.near ? ` near ${state.near.name} <span class="nearnote" id="nearNote">· rough ranges, not a field guide</span>` : '');
 
   const grid = $('grid');
   if (!rows.length) {
@@ -790,6 +807,51 @@ async function run() {
     </div>`;
   }).join('');
 }
+
+// ---- "Ducks near …": rough range polygons + the spatial extension ----
+// ranges.json (make_ranges.py) holds a few coarse region polygons, the species found in
+// each, and a list of cities. The cities fill the dropdown at once; the spatial
+// extension (~8 MB over the wire, as big as the engine) is only fetched the first time
+// someone picks one. The filter is then ST_Contains(region polygon, the city's point).
+let ranges = null, hasSpatial = false, spatialLoading = null;
+const sqlStr = s => `'${String(s).replace(/'/g, "''")}'`;
+async function loadRanges() {
+  try {
+    ranges = await (await fetch('./ranges.json')).json();
+    for (const c of ranges.cities) {
+      const o = document.createElement('option'); o.value = c.name; o.textContent = c.name; $('near').appendChild(o);
+    }
+  } catch (e) { console.warn('ranges.json unavailable — "Ducks near" hidden', e); document.querySelector('.nearsel').hidden = true; }
+}
+function ensureSpatial() {
+  if (hasSpatial) return Promise.resolve(true);
+  return spatialLoading ||= (async () => {
+    try {
+      await conn.query(`INSTALL spatial`);
+      await conn.query(`LOAD spatial`);
+      await conn.query(`CREATE TABLE regions AS SELECT * FROM (VALUES ${
+        Object.entries(ranges.regions).map(([n, wkt]) => `(${sqlStr(n)}, ST_GeomFromText(${sqlStr(wkt)}))`).join(', ')
+      }) t(region, geom)`);
+      await conn.query(`CREATE TABLE duck_regions AS SELECT * FROM (VALUES ${
+        Object.entries(ranges.ducks).flatMap(([d, rs]) => rs.map(r => `(${sqlStr(d)}, ${sqlStr(r)})`)).join(', ')
+      }) t(name, region)`);
+      hasSpatial = true;
+    } catch (e) { console.warn('spatial unavailable — "Ducks near" disabled', e); }
+    window.tealXray?.set({ spatial: hasSpatial });
+    spatialLoading = null;
+    return hasSpatial;
+  })();
+}
+$('near').addEventListener('change', async e => {
+  const city = ranges && ranges.cities.find(c => c.name === e.target.value);
+  if (!city) { state.near = null; run(); return; }
+  const status = $('statusText'), before = status.textContent;
+  if (!hasSpatial) status.textContent = 'loading the map extension (~8 MB)…';
+  const ok = await ensureSpatial();
+  status.textContent = before;
+  if (!ok) { e.target.value = ''; showToast('🦆 Couldn’t load the map extension — showing every duck'); return; }
+  state.near = city; run();
+});
 
 // ---- wire inputs ----
 $('q').addEventListener('input', e => { state.q = e.target.value; debounce(80); });

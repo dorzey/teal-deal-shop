@@ -43,6 +43,7 @@ checks it's there), and checkout is labelled as pretend.
 collector.py               the single writer: serves site, events, checkout, stats, quack
 public/                    index.html, dashboard.html, tracker.js, xray.{js,css}, ducks.svg
 make_sprites.py            generates ducks.svg (one sprite per species + x-ray skeleton)
+make_ranges.py             generates public/ranges.json (rough species ranges for "Ducks near …")
 Dockerfile, compose*.yaml, deploy/    image, local TLS rehearsal, Cloudflare Tunnel
 test_collector.py, test_pages.py      unit tests (`make test`)
 ```
@@ -112,7 +113,11 @@ this" is a `NEAREST` join over small text embeddings (hashed bag-of-words as
 `FLOAT[16]`, `array_distance`). The join and the distance function are core DuckDB; `vss`
 adds an in-memory HNSW index over the embeddings, which the join then uses (checked with
 `EXPLAIN`). At 60 ducks that is no faster than a scan and gives the same lists. The console strip shows the
-generated SQL and timings. The cart ("flock") has per-line − / ✕; stock badges
+generated SQL and timings. **Ducks near …** filters by a place you pick: each duck has
+rough, hand-drawn range polygons (`public/ranges.json`, from `make_ranges.py`; for fun, not a
+field guide) and the filter is `ST_Contains(range, ST_Point(lon, lat))` in the `spatial`
+extension. `spatial` is ~7.9 MB over the wire, so it is fetched only when someone picks a
+place. The cart ("flock") has per-line − / ✕; stock badges
 poll `/stock` every 4 s. **Truth stays on the server**: checkout and inventory
 are the OLTP tier. "Since you brought them home" fuses embeddings with a DuckPGQ
 traversal over the order history, which lives in `oltp.duckdb`, so it's a round-trip
@@ -203,8 +208,8 @@ break the app. One that did bite: a cache rule ignoring query strings served a s
 `tracker.js`, hence the hash in the asset *path*.
 Wasm loads from jsDelivr and the extensions from `haybarn-extensions.query.farm`, not
 through Cloudflare. First load, measured: the storefront moves ~9.5 MB (8.3 MB wasm,
-brotli, plus extensions); the dashboard's threaded wasm is ~7.3 MB. The wasm is 45 MB
-uncompressed.
+brotli, plus extensions), and ~7.9 MB more if someone uses "Ducks near …" (`spatial`); the
+dashboard's threaded wasm is ~7.3 MB. The wasm is 45 MB uncompressed.
 
 ## Manual re-runs
 

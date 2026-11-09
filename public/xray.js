@@ -20,21 +20,24 @@
     triggers: 'https://duckdb.org/docs/stable/sql/statements/create_trigger',
     ducklake: 'https://ducklake.select/',
     quack:    'https://duckdb.org/quack',
+    spatial:  'https://duckdb.org/docs/stable/core_extensions/spatial/overview',
   };
 
-  const state = {};   // reported by the pages: fts / vss / quack = true | false | undefined (still loading)
+  const state = {};   // reported by the pages: fts / vss / spatial / quack = true | false | undefined (still loading)
 
   const link = (key, text, cls = '') =>
     `<a class="xchip ${cls}" href="${LINKS[key]}" target="_blank" rel="noopener noreferrer">${text}</a>`;
   const plain = (text, cls = '') => `<span class="xchip ${cls}">${text}</span>`;
   const ftsChip = s => s.fts === false ? plain('ILIKE · fts not loaded', 'warn')
                      : s.fts ? link('fts', 'fts · BM25') : plain('fts loading…', 'dim');
+  const spatialChip = s => s.spatial === false ? plain('spatial not loaded', 'warn') : link('spatial', 'spatial');
   const quackChip = s => s.quack === false ? plain('Quack not connected', 'warn') : link('quack', 'Quack');
 
   // The labels beside each feature: [data-xray="key"] placeholders.
   const TAGS = {
     search:   s => link('wasm', 'DuckDB-Wasm') + link('parquet', 'parquet') + ftsChip(s),
     similar:  () => link('vss', 'vss') + link('nearest', 'NEAREST join'),
+    near:     s => spatialChip(s) + plain('ST_Contains') + plain(s.spatial ? 'loaded' : 'loaded when you pick a place', 'dim'),
     hybrid:   () => link('duckpgq', 'DuckPGQ') + link('nearest', 'NEAREST join') + plain('server-side', 'dim'),
     collab:   () => plain('plain SQL on oltp.duckdb') + plain('server-side', 'dim'),
     checkout: () => plain('oltp.duckdb') + plain('transaction') + link('triggers', 'triggers'),
@@ -52,6 +55,8 @@
                                    : 'ranked text search over names and descriptions.'],
       [link('vss', 'vss') + link('nearest', 'NEAREST'),
         '“Ducks like this”: each duck’s nearest neighbours by vector distance, found once in your browser with a NEAREST join over an HNSW index from vss.'],
+      [spatialChip(s), s.spatial === false ? 'could not load, so “Ducks near …” falls back to showing every duck.'
+                                           : '“Ducks near …”: each duck’s rough range is a polygon; the filter is ST_Contains(range, your place). Fetched only when you pick a place (~8 MB).'],
       [link('duckpgq', 'DuckPGQ') + link('nearest', 'NEAREST'), '“Since you brought them home”: a co-purchase graph walk plus similarity, server-side.'],
       [link('triggers', 'Triggers'), 'checkout is a SQL transaction on oltp.duckdb; triggers audit stock and top up the shelves.'],
       [link('ducklake', 'DuckLake'), 'everything you click is tracked into a lake — watch it on <a href="./dashboard.html">Duck HQ</a>.'],
@@ -70,6 +75,7 @@
   const RULES = [
     [/match_bm25|fts_main_|create_fts_index/i, 'fts'],
     [/hnsw/i, 'vss'],
+    [/spatial|\bst_\w+/i, 'spatial'],
     [/array_distance|array_cosine|product_vectors|product_neighbors|_tokens|_buckets|\bnearest\b/i, 'embeddings'],
     [/read_parquet|\.parquet/i, 'parquet'],
     [/^\s*(install|load)\b/i, 'extension'],
