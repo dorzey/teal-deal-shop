@@ -5,9 +5,10 @@ collector.py — Teal Deal's single-writer event collector.
 Two single-writer DuckDB connections: one for oltp.duckdb, one for the
 DuckLake catalog (see _oltp()/_lake()). The DuckLake connection is also
 served over Quack (DuckDB's own HTTP client-server protocol): another
-process can ATTACH to it over the network and read/write events while this
-one keeps running, instead of needing the file directly. oltp.duckdb is
-served the same way, on its own port (see the comment above _oltp()/_lake()).
+process can ATTACH to it over the network and read events (and, outside public
+mode, write them) while this one keeps running, instead of needing the file
+directly. Outside public mode oltp.duckdb is served the same way, on its own
+port (see the comment above _oltp()/_lake()).
 
   • serves the storefront from ./public  (so the tracker posts same-origin)
   • accepts POST /collect events and appends them to the DuckLake catalog,
@@ -45,9 +46,11 @@ DUCKLAKE_CATALOG = "teal_deal_catalog.ducklake"
 # below.
 DUCKLAKE_DB      = os.path.splitext(DUCKLAKE_CATALOG)[0]
 
-# Plain fixed token — this is a localhost-only demo (quack_serve defaults
-# allow_other_hostname to false), no different from oltp.duckdb having no
-# auth today. A real deployment would generate + guard this properly.
+# Plain fixed token. Outside public mode quack listens on loopback only, and
+# quack_serve defaults allow_other_hostname to false. In public mode the token
+# is shipped to every browser (/config), so it is public by design and the
+# lake's endpoint is made read-only instead. A real deployment would generate
+# and guard a token properly.
 QUACK_TOKEN    = "teal-deal-demo-token"
 QUACK_LAKE_PORT = 8789
 QUACK_OLTP_PORT = 8790
@@ -73,11 +76,12 @@ QUACK_PUBLIC_URL = os.environ.get("TEAL_DEAL_QUACK_URL", f"quack:localhost:{QUAC
 # process can ATTACH to it over the network and read/write events while
 # this process is running, instead of needing the file directly.
 #
-# oltp.duckdb is served too, on its own port: remote writes still funnel
-# through this one process, so its single-writer limit stands (see README).
-# DuckLake time travel (`AT (VERSION => n)`) works through the quack
-# attachment; ducklake_snapshots() does not, so 06_ducklake.sql still needs
-# the file directly.
+# Outside public mode oltp.duckdb is served too, on its own port: remote writes
+# still funnel through this one process, so its single-writer limit stands (see
+# README). DuckLake time travel (`AT (VERSION | TIMESTAMP => ...)`) works through
+# the quack attachment, and so does `remote.snapshots()`; the function form
+# ducklake_snapshots('remote') does not. 06_ducklake.sql uses that function (and
+# ducklake_table_changes), so it still needs the catalog file directly.
 #
 # oltp and the lake are two separate connections because a quack server
 # only exposes its own PRIMARY database to clients — the lake connection
@@ -115,8 +119,8 @@ def _oltp():
 def _lake():
     """Opens the DuckLake catalog directly as this connection's own primary
     database and serves it over quack (see the module-level note above).
-    Best-effort: quack is core in DuckDB v1.5.3+, but an older DuckDB just
-    means no remote access to the lake, not a crash — same tolerance as
+    Best-effort: a DuckDB without the quack extension just means no remote
+    access to the lake, not a crash — same tolerance as
     the hybrid recommender's duckpgq dependency."""
     global _lake_con
     if _lake_con is None:
@@ -164,10 +168,12 @@ def _setup_hybrid(con):
     same formula as public/index.html and 05_extras.sql) and a DuckPGQ
     co-purchase graph. `duckpgq` is a community extension, so this is
     best-effort — see the try/except in _oltp() — the same tolerance run.sh
-    already gives 05_extras.sql for the identical reason."""
-    con.execute("INSTALL vss")
+    already gives 05_extras.sql for the identical reason.
+
+    The similarity query is an exact NEAREST join with array_distance, both core
+    DuckDB, so the vss extension is not loaded here. CREATE OR REPLACE below also
+    drops the HNSW index 05_extras.sql built on product_vectors."""
     con.execute("INSTALL duckpgq FROM community")
-    con.execute("LOAD vss")
     con.execute("LOAD duckpgq")
     con.execute("SET active_grammar_extensions = ['duckpgq']")  # DuckDB 2.0 opt-in
     con.execute("""
@@ -503,8 +509,8 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
 
 def get_dashboard():
     """revenue_by_category + totals — the dashboard numbers that need
-    oltp.duckdb (served over quack, but the dashboard doesn't attach to it
-    yet — see _oltp()/_lake()). public/dashboard.html gets funnel/retention/daily
+    oltp.duckdb (served over quack in plain mode, but the dashboard doesn't
+    attach to it yet — see _oltp()/_lake()). public/dashboard.html gets funnel/retention/daily
     directly via quack instead; see its queryLakeStats()."""
     con = _oltp()
     with _oltp_lock:

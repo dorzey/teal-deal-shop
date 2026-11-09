@@ -1,7 +1,9 @@
-"""Tests for collector.py's request validation and rate limiting.
+"""Tests for collector.py: request validation, rate limiting, client-IP handling,
+asset-path versioning, and the inventory triggers (run against an in-memory copy of
+the 01_seed.sql schema).
 
-Importing collector never touches the databases (they connect lazily), so these
-need no build and no network:   make test   (or: uv run python -m unittest)
+Importing collector never touches the databases on disk (they connect lazily), so
+these need no build and no network:   make test   (or: uv run python -m unittest)
 """
 import datetime as dt
 import unittest

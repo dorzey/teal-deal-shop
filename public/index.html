@@ -621,12 +621,11 @@ async function loadExtras() {
   } catch (e) { console.warn('fts unavailable — falling back to ILIKE search', e); }
   window.tealXray?.set({ fts: hasFts });   // so the X-ray labels say what is really running
 
-  // "Ducks like this": DuckDB-WASM can load the vss extension itself —
-  // INSTALL/LOAD vss, array_distance and the 2.0 NEAREST join all work
-  // in-browser — so recommendations are computed live, right here, from a real text
-  // embedding (hashed bag-of-words over name+description, same formula as
-  // 05_extras.sql / collector.py). No precompute, export step, or
-  // external model needed.
+  // "Ducks like this": computed live, right here, from a text embedding (hashed
+  // bag-of-words over name+description, same formula as 05_extras.sql / collector.py)
+  // stored as FLOAT[16]. array_distance and the 2.0 NEAREST join are core DuckDB;
+  // the vss extension adds the HNSW index created below. No precompute, export
+  // step, or external model needed.
   try {
     await conn.query(`INSTALL vss`);
     await conn.query(`LOAD vss`);
@@ -651,6 +650,11 @@ async function loadExtras() {
     `);
     await conn.query(`DROP TABLE _tokens`);
     await conn.query(`DROP TABLE _buckets`);
+    // vss's HNSW index over the embeddings (in memory, so no persistence setting). With it
+    // in place DuckDB plans the NEAREST join below as an "Hnsw Index Join" (seen with
+    // EXPLAIN). At 60 ducks that is no faster than scanning — it is here to show vss at
+    // work — and the lists come out the same as without it (compared for all 60 ducks).
+    await conn.query(`CREATE INDEX product_hnsw ON product_vectors USING HNSW (embedding)`);
     // Each duck's nearest neighbours, computed once with DuckDB 2.0's NEAREST join (top-k
     // by a distance) so the per-keystroke search query only has to look them up. Many
     // ducks are exactly as near as others (equal distances), and NEAREST picks
@@ -804,7 +808,7 @@ function showToast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-// ---- cart ("flock") + checkout: a real order, written into oltp.duckdb ----
+// ---- cart ("flock") + checkout: an order row written into oltp.duckdb (pretend: nothing is charged or shipped) ----
 // No login flow in this demo, so map the tracker's per-tab session id onto
 // one of the 500 seeded users (FNV-1a -> range 1..500) instead of inventing
 // a fake signup.
@@ -917,8 +921,9 @@ async function showPostPurchaseRecs(purchasedIds) {
     } catch (e) { /* hybrid picks are optional */ }
   }
 
-  // 2. Person-based: real collaborative filtering over YOUR order history in
-  // oltp.duckdb ("shoppers like you also got") — server-side, see collector.py.
+  // 2. Person-based: collaborative filtering over the order history in oltp.duckdb
+  // of the seeded user this tab maps to ("shoppers like you also got") —
+  // server-side, see collector.py.
   try {
     const res = await fetch(`/recommendations?user_id=${userId}`);
     if (res.ok) {

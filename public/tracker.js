@@ -1,10 +1,10 @@
 // ============================================================================
 // tracker.js — Teal Deal's tiny web-analytics tracker.
 //
-// Fires pageview / add_to_cart / purchase events at the collector. Keeps a
-// random per-tab session_id in sessionStorage (gone when the tab closes; no
-// cookies, nothing kept across visits), and prefers navigator.sendBeacon so
-// events survive page unloads.
+// Sends events to the collector (the storefront sends pageview and add_to_cart;
+// the collector also accepts purchase). Keeps a random per-tab session_id in
+// sessionStorage (gone when the tab closes; no cookies, nothing kept across
+// visits) and sends with navigator.sendBeacon so events survive page unloads.
 //
 // Usage in a page:
 //   <script src="tracker.js" data-collector="http://localhost:8787/collect"></script>
@@ -38,7 +38,7 @@
     send({
       event_type: eventType,
       product_id: props.product_id ?? null,
-      user_id: props.user_id ?? null,           // set once a visitor logs in
+      user_id: props.user_id ?? null,           // unused here: the demo has no login
       event_ts: new Date().toISOString(),
       session_id: sessionId(),
       props: {

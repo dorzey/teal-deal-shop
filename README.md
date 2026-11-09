@@ -37,7 +37,7 @@ checks it's there), and checkout is labelled as pretend.
 01_seed.sql  02_oltp.sql   oltp.duckdb: users, products, inventory, orders, triggers
 03_lake.sql                clickstream into a DuckLake catalog (teal_deal_catalog.ducklake + lakehouse_data/)
 04_marts.sql               marts.duckdb: sessions, funnel, retention, revenue
-05_extras.sql              fts, vss, DuckPGQ, spatial, httpfs
+05_extras.sql              fts, vss (HNSW), DuckPGQ, spatial (httpfs example commented out)
 06_ducklake.sql            snapshots, time travel, change feed
 07_stress.py               concurrent-writer test over quack
 collector.py               the single writer: serves site, events, checkout, stats, quack
@@ -95,7 +95,7 @@ gap), session funnel, retention cohorts (lake activity joined to OLTP signup +
 country), revenue rollup. Rebuild after live traffic with the collector stopped (it
 holds the locks): `duckdb marts.duckdb -f 04_marts.sql`.
 
-**Extras (`05`)** — BM25 `fts`, HNSW `vss` over text embeddings, a DuckPGQ
+**Extras (`05`)** — BM25 `fts`, an HNSW `vss` index over text embeddings (the collector rebuilds that table at startup, which drops the index), a DuckPGQ
 co-purchase graph (`MATCH`), `spatial` nearest-warehouse (an `httpfs` remote-Parquet
 join is there as a commented-out example).
 DuckPGQ needs `SET active_grammar_extensions = ['duckpgq']` after `LOAD` on 2.0
@@ -108,8 +108,10 @@ DuckPGQ needs `SET active_grammar_extensions = ['duckpgq']` after `LOAD` on 2.0
 **Storefront (`public/index.html`)** — ships the catalog as Parquet and runs
 DuckDB-Wasm in the browser: every keystroke, facet and sort is a SQL query
 (BM25 blended with `ILIKE` so mid-word typing never goes empty). "Ducks like
-this" is a `NEAREST` join over small text embeddings (hashed bag-of-words,
-`array_distance`); the page loads `vss` but nothing there needs it. The console strip shows the
+this" is a `NEAREST` join over small text embeddings (hashed bag-of-words as
+`FLOAT[16]`, `array_distance`). The join and the distance function are core DuckDB; `vss`
+adds an in-memory HNSW index over the embeddings, which the join then uses (checked with
+`EXPLAIN`). At 60 ducks that is no faster than a scan and gives the same lists. The console strip shows the
 generated SQL and timings. The cart ("flock") has per-line − / ✕; stock badges
 poll `/stock` every 4 s. **Truth stays on the server**: checkout and inventory
 are the OLTP tier. "Since you brought them home" fuses embeddings with a DuckPGQ

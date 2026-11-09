@@ -11,7 +11,7 @@ Quack announcement blog), not just a claim taken on faith.
 Writes use real event_types (pageview/add_to_cart/purchase, weighted like
 real traffic) and are ordinary rows in every other respect, so a run
 visibly moves the dashboard's sessions/funnel/retention/daily numbers —
-seed data is dated months in the past, so a burst of writes shows up as a
+seed data is dated March 2025, so a burst of writes shows up as a
 genuine spike on "today," the same way real traffic would. Each row is
 tagged `props: {"stress": true, "worker": N}` so public/dashboard.html's
 pollStressWrites() can count them separately from organic traffic.
@@ -29,7 +29,7 @@ import duckdb
 from collector import QUACK_TOKEN, QUACK_LAKE_PORT  # same server, no duplicated constants
 
 
-# Roughly matches real traffic's mix (see README's funnel engineering note) —
+# Roughly matches the seeded traffic's mix (03_lake.sql) —
 # mostly pageviews, fewer carts, fewer still purchases — so a stress run
 # nudges the funnel the way a real traffic burst would, not randomly.
 EVENT_TYPES = ["pageview"] * 7 + ["add_to_cart"] * 2 + ["purchase"] * 1

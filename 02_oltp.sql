@@ -3,9 +3,10 @@
 --
 -- This is the tier DuckDB is "not supposed" to be good at, which makes it the
 -- most instructive. Everything here assumes a SINGLE writer: one process holds
--- the sole write connection and serializes order placement. Readers use
--- separate read-only connections. That's the honest way to run an app on an
--- embedded OLAP engine.
+-- the sole write connection and serializes order placement. While it runs it
+-- holds the file lock, so other processes can't open the file even read-only:
+-- they read through that process (collector.py, or its quack endpoint outside
+-- public mode). That's the honest way to run an app on an embedded OLAP engine.
 --
 -- The transaction below is all-or-nothing: allocate an order id, decrement
 -- stock, write the line items. If any product would go negative, the

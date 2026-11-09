@@ -25,8 +25,9 @@ LIMIT 5;
 INSTALL vss; LOAD vss;
 
 -- HNSW indexes on a persistent (file) database are still experimental, so they
--- require this opt-in. In-memory databases don't need it. For a toy it's fine;
--- for production, know that the index is rebuilt on load and isn't crash-safe.
+-- require this opt-in. In-memory databases don't need it (the storefront builds
+-- one in the browser without it). Fine for a toy; see the vss docs before relying
+-- on a persisted index.
 SET hnsw_enable_experimental_persistence = true;
 
 -- NOTE: DuckDB won't let you UPDATE a table whose key is referenced by a
@@ -61,7 +62,10 @@ CREATE INDEX IF NOT EXISTS pv_hnsw ON product_vectors USING HNSW (embedding);
 
 -- Nearest neighbours to product 3 (excludes itself), via DuckDB 2.0's
 -- NEAREST join: each left row is matched with its k closest right rows.
--- (Use APPROX NEAREST to let it use the HNSW index.)
+-- (With pv_hnsw in place this plain NEAREST join is planned as an "Hnsw Index
+-- Join" — checked with EXPLAIN on 2.0.0 — so APPROX isn't needed to use it.)
+-- Note: collector.py rebuilds product_vectors when it starts, which drops pv_hnsw;
+-- nothing the running site queries uses an HNSW index on the server.
 SELECT v.product_id, p.name, p.category,
        array_distance(v.embedding, q.embedding) AS dist
 FROM product_vectors q
