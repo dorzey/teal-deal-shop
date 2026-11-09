@@ -64,7 +64,7 @@ make_sprites.py            generates ducks.svg (one sprite per species + x-ray s
 make_ranges.py             generates ranges.json (rough species ranges for "Ducks near …")
 run.sh, Makefile           build + serve, and a wrapper for the common tasks
 Dockerfile, compose*.yaml, deploy/, .env.example   image, local TLS rehearsal, Cloudflare Tunnel
-test_collector.py, test_pages.py                   unit tests (`make test`, no network)
+test_collector.py, test_pages.py, test_repo.py     unit tests (`make test`, no network)
 pyproject.toml, uv.lock, .python-version           Python deps (duckdb pinned to 2.0.0)
 ```
 
@@ -214,8 +214,10 @@ validation are unit-tested by `make test`):
 - in public mode the client IP comes from a proxy-set header
   (`TEAL_DEAL_CLIENT_IP_HEADER`: `X-Forwarded-For` for Caddy, `CF-Connecting-IP` behind
   Cloudflare), trusted only from loopback; an IPv6 client is keyed by its /64;
-- responses carry `nosniff` and `X-Frame-Options: DENY`, and the containers are limited
-  to 1 GB and 1.5 CPUs.
+- pages are served with a Content-Security-Policy (scripts and Wasm from this origin and
+  jsDelivr, extensions from Haybarn's repository, fonts from Google, quack from the
+  configured address; nothing else), plus `nosniff` and `X-Frame-Options: DENY`; the
+  containers are limited to 1 GB and 1.5 CPUs.
 
 **Not covered:** a read query is capped on memory, temp disk and threads but not on time
 (only `quack_server_max_connections` bounds how many run at once); a distributed flood
@@ -223,7 +225,10 @@ can use up the global order limit and lock out real shoppers; and the lake's con
 including anything a visitor forges through `/collect`, are readable by anyone.
 
 The image bakes in the pinned 2.0.0 CLI, the Python deps, every extension and the
-seeded data, so containers need no network at runtime and start from the seed state.
+seeded data, so containers need no network at runtime and start from the seed state. The
+base image and `cloudflared` are pinned by digest, and the CLI download is checked against a
+SHA-256 (DuckDB publishes none, so the hashes were taken from the downloads when the version
+was pinned). The healthcheck needs both the site and the lake's quack port to answer.
 
 ## Deploying: Hetzner + Cloudflare Tunnel
 
@@ -250,7 +255,8 @@ Cloudflare gotchas (not hit here, so untested): features that rewrite scripts
 (*Rocket Loader*, *Auto Minify*) or challenge requests (*Bot Fight Mode*, WAF rules on
 `POST /collect` or `POST /quack`, which browsers can't solve in the background) could
 break the app. The one that did bite was a cache rule ignoring query strings, which
-served a stale `tracker.js`; hence the hash in the asset *path*.
+served a stale `tracker.js`; hence the hash in the asset *path*. The Content-Security-Policy
+also blocks anything Cloudflare injects into the page, such as its Web Analytics beacon.
 
 The Wasm loads from jsDelivr and the extensions from `haybarn-extensions.query.farm`,
 not through Cloudflare. First-load transfer, measured: the storefront moves about

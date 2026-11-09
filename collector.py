@@ -640,6 +640,38 @@ def version_assets(html, public=PUBLIC):
             return m.group(1)
     return ASSET_RE.sub(tag, html)
 
+def _quack_origin():
+    """The browser origin its quack connection goes to, from TEAL_DEAL_QUACK_URL
+    (`quack:host:port`): http for loopback, https otherwise."""
+    m = re.match(r"^quack:\[?([^\]/]+?)\]?(?::(\d+))?$", QUACK_PUBLIC_URL)
+    if not m:
+        return None
+    host, port = m.group(1), m.group(2)
+    local = host in ("localhost", "::1") or host.startswith("127.")
+    default = "80" if local else "443"
+    if ":" in host:                     # an IPv6 literal needs brackets in an origin
+        host = f"[{host}]"
+    return f"{'http' if local else 'https'}://{host}" + (f":{port}" if port and port != default else "")
+
+def _csp():
+    """Content-Security-Policy for the HTML pages: scripts and the Wasm engine from this
+    origin and jsDelivr, extensions from Haybarn's repository, fonts from Google, and the
+    quack connection to wherever TEAL_DEAL_QUACK_URL points. Inline script and style are
+    allowed because the pages are single files; everything else is closed."""
+    connect = ["'self'", "https://cdn.jsdelivr.net", "https://haybarn-extensions.query.farm"]
+    if _quack_origin():
+        connect.append(_quack_origin())
+    return "; ".join([
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src " + " ".join(connect),
+        "worker-src blob: https://cdn.jsdelivr.net",
+        "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
+    ])
+
 def _ip_key(addr):
     """Rate-limit key for a client address: IPv4 as is; IPv6 collapsed to its /64, since
     one subscriber can rotate through billions of addresses inside it."""
@@ -655,6 +687,7 @@ def _ip_key(addr):
 
 class Handler(SimpleHTTPRequestHandler):
     timeout = 15   # drop connections that stall mid-request (slowloris)
+    _head_only = False   # set for HEAD requests answered through do_GET: headers, no body
 
     def __init__(self, *a, **k):
         super().__init__(*a, directory=PUBLIC, **k)
@@ -717,7 +750,11 @@ class Handler(SimpleHTTPRequestHandler):
         return bool(m)
 
     def do_HEAD(self):
-        self._asset()
+        if self._asset():
+            return super().do_HEAD()
+        if urlparse(self.path).path in ("/config", "/", "/index.html", "/dashboard.html"):
+            self._head_only = True      # the same answer as GET, without the body
+            return self.do_GET()
         super().do_HEAD()
 
     def do_GET(self):
@@ -771,8 +808,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Security-Policy", _csp())
             self.end_headers()
-            self.wfile.write(body)
+            if not self._head_only:
+                self.wfile.write(body)
         else:
             super().do_GET()
 
@@ -799,7 +838,8 @@ class Handler(SimpleHTTPRequestHandler):
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         self.end_headers()
-        self.wfile.write(body)
+        if not self._head_only:
+            self.wfile.write(body)
 
     def do_POST(self):
         path = self.path.rstrip("/")
