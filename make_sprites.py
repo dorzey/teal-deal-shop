@@ -178,8 +178,9 @@ def skeleton_symbol():
             'stroke-linecap="round" stroke-linejoin="round">' + "".join(out) + "</g></symbol>")
 
 if __name__ == "__main__":
+    import os
     assert len(SPECIES) == 60, len(SPECIES)
     body = "\n".join(symbol(n, *v[:5], v[5]) for n, v in SPECIES.items())
-    with open("public/ducks.svg", "w") as f:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "public", "ducks.svg"), "w") as f:
         f.write(f'<svg xmlns="http://www.w3.org/2000/svg" style="display:none">\n{body}\n{skeleton_symbol()}\n</svg>\n')
     print(f"wrote public/ducks.svg ({len(SPECIES)} symbols + skeleton)")

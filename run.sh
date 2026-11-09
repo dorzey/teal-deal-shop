@@ -19,8 +19,10 @@ echo "==> uv sync (Python deps, pinned duckdb==2.0.0)"
 uv sync
 
 echo "==> reset"
-pkill -INT -f "python3 collector.py" 2>/dev/null || true   # SIGINT so it flushes + closes cleanly, like Ctrl-C
-rm -f oltp.duckdb marts.duckdb teal_deal_catalog.ducklake
+# Only this checkout's server (another clone's keeps running); SIGINT so it flushes + closes cleanly, like Ctrl-C.
+pkill -INT -f "$PWD/.venv/bin/python3 collector.py" 2>/dev/null || true
+# the globs also catch a leftover .wal from a crashed server, which would otherwise be replayed into the new files
+rm -f oltp.duckdb* marts.duckdb* teal_deal_catalog.ducklake*
 rm -rf lakehouse_data && mkdir -p public
 
 echo "==> 01  seed OLTP (schema, constraints, synthetic data)"

@@ -24,6 +24,11 @@ services:
       TEAL_DEAL_QUACK_URL: ${TEAL_DEAL_QUACK_URL:-quack:tealdeal.dorzey.net:443}
       # Cloudflare sets this itself; X-Forwarded-For would be spoofable here
       TEAL_DEAL_CLIENT_IP_HEADER: CF-Connecting-IP
+    # The lake is publicly queryable (read-only), so cap what a runaway query can take
+    # from the node. DuckDB's own memory_limit inside is 512 MB; this is the outer fence.
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
     restart: unless-stopped
 
   cloudflared:
