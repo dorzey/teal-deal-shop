@@ -45,5 +45,18 @@ class Preloads(unittest.TestCase):
             self.assertIn(f"/core/v2.0.0/wasm_eh/{ext}.duckdb_extension.wasm", html.split("<style>")[0])
 
 
+class DemoNotice(unittest.TestCase):
+    """The site is public and looks like a shop, so both pages must say it isn't one."""
+    def test_both_pages_say_this_is_not_a_real_shop(self):
+        for name in ("index.html", "dashboard.html"):
+            with self.subTest(page=name):
+                html = page(name)
+                self.assertIn('id="demoNote"', html)
+                self.assertIn("not a real shop", html.lower())
+
+    def test_the_notice_is_styled_by_the_shared_stylesheet(self):
+        self.assertIn(".demonote", page("xray.css"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -84,3 +84,11 @@ body.xray .duckwrap::after{           /* the sweep, once */
 @media (max-width:640px){
   .xraybar ul{grid-template-columns:1fr}
 }
+
+
+/* Demo notice, on both pages: this is not a real shop. Plain colours so it reads
+   the same with X-ray on or off. */
+.demonote{margin:12px 0 14px;padding:9px 14px;border:1px solid #E5B93A;border-radius:12px;
+  background:#FFF3C4;color:#4A3A00;font-size:13px;line-height:1.5}
+.demonote a{color:inherit;text-decoration:underline}
+.cartnote{margin:8px 0 0;font-size:12px;color:var(--muted)}

@@ -24,6 +24,9 @@ can't be read by older versions. Network needed on first run (extension installs
 turns the ducks into x-rays. Code: `public/xray.js` (all outbound links in one
 table at the top; `make check-links` before deploying) + `xray.css`.
 
+Both pages carry a "demo, not a real shop" notice (`.demonote` in `xray.css`; `test_pages.py`
+checks it's there), and checkout is labelled as pretend.
+
 `make help` lists targets: `run`, `build` (no serve), `serve` (no rebuild),
 `public` / `up` / `down` (local TLS rehearsal, see below), `check`, `browser`,
 `stress`, `test`, `check-links`, `stop`.
