@@ -1,9 +1,10 @@
 # Teal Deal as a self-contained public demo.
 #
 # The data is built into the image (./run.sh --build-only), so every fresh
-# container starts from the seeded state: `docker compose up -d --force-recreate
-# app` is the "reset the demo" button. The extensions are baked in too, so the
-# container needs no network at runtime.
+# container starts from the seeded state: recreating the containers
+# (`docker compose up -d --force-recreate`, or `make up RESET=1`) is the "reset the
+# demo" button. The extensions are baked in too, so the container needs no network
+# at runtime.
 FROM python:3.13-slim
 
 ARG DUCKDB_VERSION=2.0.0

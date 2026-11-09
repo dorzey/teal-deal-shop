@@ -67,7 +67,7 @@ check-links:  ## request every outbound link in X-ray mode (public/xray.js); run
 	  code=$$(curl -s -o /dev/null -L -m 20 -w '%{http_code}' "$$url"); \
 	  echo "$$code  $$url"; [ "$$code" = 200 ] || fail=1; done; exit $$fail
 
-test:  ## unit tests: request validation and rate limits (no build or network needed)
+test:  ## unit tests: validation, rate limits, client IP, restock trigger, page checks (no build or network)
 	uv run python -m unittest
 
 stop:  ## stop collector, proxy/containers and throwaway browser

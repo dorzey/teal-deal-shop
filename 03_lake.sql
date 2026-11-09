@@ -39,8 +39,9 @@ FROM (
     FROM range(1, 4001) t(id)
 )
 -- Gentle deterministic churn: a shrinking slice of users stays active each
--- later week, so the retention triangle decays (~100% -> ~50%) instead of
--- every user being active in every week.
+-- later week, so the retention triangle decays (about 100% in weeks 0-1 down to
+-- about 70% by week 4; week 5 is a partial week at the end of the month, ~22%)
+-- instead of every user being active in every week.
 WHERE (user_id % 10) < (10 - week_idx);
 
 -- The full clickstream = product pageviews + some non-product browsing

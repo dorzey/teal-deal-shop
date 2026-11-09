@@ -1,5 +1,6 @@
 /* X-ray mode (see xray.js), shared by the storefront and the dashboard.
-   Everything below is inert until <body class="xray">. */
+   The look changes only under <body class="xray">. Always on: the .duckwrap layout
+   (it holds the duck art) and the demo notice at the end. */
 
 /* the toggle: looks like the header's other pills; lit up when on */
 button.xraybtn{cursor:pointer;appearance:none}

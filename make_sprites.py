@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generates public/ducks.svg: one <symbol> per species in 01_seed.sql, each a
-stylised drake in side view. Species are matched by slug (lowercase, dashes),
-so the storefront draws <use href="ducks.svg#northern-pintail">.
+stylised drake in side view, plus one shared `skeleton` symbol that X-ray mode
+lays over the ducks. Species are matched by slug (lowercase, dashes), so the
+storefront draws <use href="ducks.svg#northern-pintail">.
 
     python3 make_sprites.py
 """

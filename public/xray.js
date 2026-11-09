@@ -51,7 +51,7 @@
       [ftsChip(s), s.fts === false ? 'could not load, so search falls back to a plain substring match.'
                                    : 'ranked text search over names and descriptions.'],
       [link('vss', 'vss') + link('nearest', 'NEAREST'),
-        '“Ducks like this”: each duck’s nearest neighbours by vector distance, found once in your browser with a NEAREST join.'],
+        '“Ducks like this”: each duck’s nearest neighbours by vector distance, found once in your browser with a NEAREST join over an HNSW index from vss.'],
       [link('duckpgq', 'DuckPGQ') + link('nearest', 'NEAREST'), '“Since you brought them home”: a co-purchase graph walk plus similarity, server-side.'],
       [link('triggers', 'Triggers'), 'checkout is a SQL transaction on oltp.duckdb; triggers audit stock and top up the shelves.'],
       [link('ducklake', 'DuckLake'), 'everything you click is tracked into a lake — watch it on <a href="./dashboard.html">Duck HQ</a>.'],
@@ -69,7 +69,8 @@
   // Tag for a live-query row, by what the SQL is doing.
   const RULES = [
     [/match_bm25|fts_main_|create_fts_index/i, 'fts'],
-    [/array_distance|array_cosine|product_vectors|product_neighbors|_tokens|_buckets|hnsw|\bnearest\b/i, 'vss'],
+    [/hnsw/i, 'vss'],
+    [/array_distance|array_cosine|product_vectors|product_neighbors|_tokens|_buckets|\bnearest\b/i, 'embeddings'],
     [/read_parquet|\.parquet/i, 'parquet'],
     [/^\s*(install|load)\b/i, 'extension'],
   ];
