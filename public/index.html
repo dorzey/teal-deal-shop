@@ -385,10 +385,12 @@
 <body>
 <div class="wrap">
   <aside class="demonote" id="demoNote" role="note">
-    <b>Demo, not a real shop.</b> The ducks are made up and <b>Q</b> is quackers, not money: nothing is sold,
+    <span class="demotext"><b>Demo, not a real shop.</b> The ducks are made up and <b>Q</b> is quackers, not money: nothing is sold,
     charged or shipped, and it never asks for a name, address or payment. It exists to show off DuckDB —
-    your clicks are logged (a random id for this tab, no cookies) to feed the <a href="./dashboard.html">Duck HQ</a> dashboard.
+    your clicks are logged (a random id for this tab, no cookies) to feed the <a href="./dashboard.html">Duck HQ</a> dashboard.</span>
+    <button class="democlose" id="demoNoteClose" type="button" aria-label="Dismiss this notice">✕</button>
   </aside>
+  <script>try { if (sessionStorage.getItem('teal_deal_demo_note') === 'x') document.getElementById('demoNote').hidden = true; } catch {}</script>
   <header>
     <div class="mark">
       <h1>Teal Deal<span class="mascotwrap"><span class="mascot" id="mascot" aria-hidden="true">🦆</span><span class="bubble" id="mascotBubble"></span></span></h1>

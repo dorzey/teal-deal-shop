@@ -132,6 +132,20 @@
     html: key => (TAGS[key] ? TAGS[key](state) : ''),
     tag, links: LINKS,
   };
+  // The demo notice on both pages can be dismissed — for this tab only (sessionStorage),
+  // so it is back on the next visit. Each page hides it early, with a tiny inline script
+  // after the notice, so a dismissed notice never flashes.
+  function initDemoNote() {
+    const note = document.getElementById('demoNote'), close = document.getElementById('demoNoteClose');
+    if (!note || !close) return;
+    close.addEventListener('click', () => {
+      note.hidden = true;
+      try { sessionStorage.setItem('teal_deal_demo_note', 'x'); } catch {}
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initDemoNote);
+  else initDemoNote();
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
