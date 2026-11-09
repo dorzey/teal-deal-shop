@@ -460,9 +460,9 @@ def get_hybrid_recommendations(purchased_ids, limit=4):
     """"Since you brought them home" — a hybrid recommender: DuckPGQ
     co-purchase graph traversal (who else bought these, tier 0) fused with
     text-embedding similarity (tier 1 fallback, same tiered pattern as
-    get_recommendations() above). Runs server-side because DuckPGQ doesn't
-    load in DuckDB-WASM, unlike "Ducks like this," which stays fully
-    client-side. See _setup_hybrid()."""
+    get_recommendations() above). Runs server-side because the order history
+    lives in oltp.duckdb, unlike "Ducks like this," which stays fully
+    client-side. (DuckPGQ does load in the Haybarn Wasm build.) See _setup_hybrid()."""
     if not _has_hybrid or not purchased_ids:
         return []
     con = _oltp()

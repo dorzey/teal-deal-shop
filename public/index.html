@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Teal Deal 🦆 — a very serious duck emporium, running in your browser</title>
+<title>Teal Deal 🦆 — a demo duck shop (not a real shop), running DuckDB in your browser</title>
+<meta name="description" content="A demo, not a real shop: made-up ducks, nothing sold or shipped. A showcase of DuckDB running in the browser and on the server." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -383,6 +384,11 @@
 </head>
 <body>
 <div class="wrap">
+  <aside class="demonote" id="demoNote" role="note">
+    <b>Demo, not a real shop.</b> The ducks are made up and <b>Q</b> is quackers, not money: nothing is sold,
+    charged or shipped, and it never asks for a name, address or payment. It exists to show off DuckDB —
+    your clicks are logged (a random id for this tab, no cookies) to feed the <a href="./dashboard.html">Duck HQ</a> dashboard.
+  </aside>
   <header>
     <div class="mark">
       <h1>Teal Deal<span class="mascotwrap"><span class="mascot" id="mascot" aria-hidden="true">🦆</span><span class="bubble" id="mascotBubble"></span></span></h1>
@@ -394,6 +400,7 @@
         <button class="cartchip" id="cartBtn" aria-expanded="false">🦆 flock <span class="n" id="cartCount">0</span></button>
         <div class="cartpanel" id="cartPanel">
           <div id="cartItems"><div class="cartempty">Your flock is empty. Go make some friends.</div></div>
+          <div class="cartnote">Pretend checkout: nothing is charged or shipped.</div>
           <div class="cartfoot">
             <b id="cartTotal"><span class="quacker">Q</span>0.00</b>
             <button id="checkoutBtn" disabled>Take them home</button>
@@ -892,9 +899,8 @@ async function showPostPurchaseRecs(purchasedIds) {
 
   // 1. Hybrid: DuckPGQ co-purchase graph (behavioral signal) fused with real
   // text-embedding similarity (content signal), server-side — see
-  // collector.py's get_hybrid_recommendations(). DuckPGQ doesn't load in
-  // DuckDB-WASM, so unlike "Ducks like this" this can't run purely
-  // client-side.
+  // collector.py's get_hybrid_recommendations(). The order history it walks
+  // lives in oltp.duckdb, so unlike "Ducks like this" this isn't client-side.
   if (purchasedIds.length) {
     try {
       const res = await fetch(`/hybrid-recommendations?product_ids=${purchasedIds.join(',')}`);
@@ -959,7 +965,7 @@ async function placeOrder() {
     cart.clear(); renderCart();
     setCartOpen(false);
     mascotMood('party'); burstFeathers();
-    showToast(`🦆 Taken home — order #${data.order_id}, ${quacker(total.toFixed(2))}. Waddle safe!`);
+    showToast(`🦆 Pretend order #${data.order_id}, ${quacker(total.toFixed(2))} — nothing is charged or shipped. Waddle safe!`);
     showPostPurchaseRecs(items.map(it => it.product_id));
     await refreshStock().catch(() => {});
     run();

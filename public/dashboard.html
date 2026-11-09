@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Duck HQ 🦆 — Teal Deal's live dashboard</title>
+<title>Duck HQ 🦆 — Teal Deal's live dashboard (demo data)</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%86%3C/text%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -136,6 +136,10 @@
 </head>
 <body>
 <div class="wrap">
+  <aside class="demonote" id="demoNote" role="note">
+    <b>Demo, not a real shop.</b> Most of these numbers are made-up seed data (500 invented customers, March 2025),
+    plus the clicks and pretend orders of visitors like you. Money is in quackers (<b>Q</b>), nothing is really sold or shipped.
+  </aside>
   <header>
     <div class="mark">
       <h1>🦆 Duck HQ</h1>
@@ -177,10 +181,10 @@ const fmtQ = n => `Q${n.toLocaleString('en', { minimumFractionDigits: 2, maximum
 // compute funnel/retention/daily at all, so if this fails, those cards just
 // show a waiting/empty state instead of stale or re-fetched data.
 //
-// Uses Query Farm's Haybarn build of DuckDB-Wasm (@haybarn/haybarn-wasm), the
-// first published wasm build on the DuckDB 2.0 engine whose quack extension can
-// ATTACH to a 2.0 server; @duckdb/duckdb-wasm is still on 1.5.x here and
-// speaks an older quack protocol. Only the threaded variant works: quack needs
+// Uses Query Farm's Haybarn build of DuckDB-Wasm (@haybarn/haybarn-wasm), whose
+// quack extension loads and can ATTACH to a 2.0 server. The official
+// @duckdb/duckdb-wasm `next` (1.33.1-dev114.0) is on the 2.0 engine too, but
+// `LOAD quack` failed there when tried on 2026-11-08. Only the threaded variant works: quack needs
 // real threads, which needs a cross-origin-isolated page, so collector.py
 // serves this page with COOP/COEP headers. index.html uses the same package, pinned to
 // the same version (test_pages.py checks), but its non-threaded build — the shop

@@ -24,6 +24,9 @@ can't be read by older versions. Network needed on first run (extension installs
 turns the ducks into x-rays. Code: `public/xray.js` (all outbound links in one
 table at the top; `make check-links` before deploying) + `xray.css`.
 
+Both pages carry a "demo, not a real shop" notice (`.demonote` in `xray.css`; `test_pages.py`
+checks it's there), and checkout is labelled as pretend.
+
 `make help` lists targets: `run`, `build` (no serve), `serve` (no rebuild),
 `public` / `up` / `down` (local TLS rehearsal, see below), `check`, `browser`,
 `stress`, `test`, `check-links`, `stop`.
@@ -45,8 +48,8 @@ test_collector.py, test_pages.py      unit tests (`make test`)
 ```
 
 Synthetic data is deterministic (`setseed`): 500 users, 60 products, 400
-historical orders (+2 from the `02_oltp.sql` demo), ~5,400 events over 31 days.
-Funnel ≈ 33% view→cart, 33% cart→purchase; retention decays gently.
+historical orders (+2 from the `02_oltp.sql` demo), 5,343 events over 31 days (March
+2025). Funnel ≈ 33% view→cart, 33% cart→purchase.
 
 ## The tiers
 
@@ -54,7 +57,9 @@ Funnel ≈ 33% view→cart, 33% cart→purchase; retention decays gently.
 constraints and a `SEQUENCE`. Placing an order is one `BEGIN … COMMIT`:
 allocate order, decrement inventory, write lines. `CHECK (stock >= 0)` replaces a
 row lock — overselling rolls everything back. DuckDB is single-writer, so all
-writes funnel through one process (`collector.py`); readers use read-only connections.
+writes funnel through one process (`collector.py`). While it runs it holds the file
+lock, so other processes can't open `oltp.duckdb` even read-only; they go through the
+collector (in plain mode, its quack endpoint).
 
 Two 2.0 **triggers** (in the DB, so every writer gets them): `trg_stock_audit`
 logs inventory changes; `trg_restock` tops a product back up to 40 when an order
@@ -68,13 +73,14 @@ commit is a snapshot: `AT (VERSION => n)` time travel and a change feed. The see
 lands three chronological waves = three snapshots to explore immediately.
 
 **Live path** — `tracker.js` keeps only a random per-tab `session_id` (`sessionStorage`: gone when
-the tab closes, no cookies, no persistent visitor id) and `sendBeacon`s a pageview on load and `add_to_cart` on card click.
+the tab closes, no cookies, no persistent visitor id) and `sendBeacon`s a pageview on load and `add_to_cart` when a duck is added to the flock.
 `collector.py` batches them into the lake in the marts' schema, and merges small
 files every 60 s (`ducklake_merge_adjacent_files`). It holds two connections:
 `oltp.duckdb` (orders, recs, revenue) and the lake (events, funnel, retention).
 
 **Quack** — DuckDB's [HTTP client-server protocol](https://duckdb.org/2026/05/12/quack-remote-protocol.html).
-The lake is served on 8789, `oltp.duckdb` on 8790 (token `teal-deal-demo-token`):
+The lake is served on 8789 and, in plain mode only, `oltp.duckdb` on 8790 (token
+`teal-deal-demo-token`; public mode serves just the read-only lake):
 
 ```bash
 duckdb -c "INSTALL quack; LOAD quack;
@@ -86,10 +92,12 @@ Remote writes still go through the collector's one connection.
 
 **Marts (`04`)** — attaches OLTP read-only plus the lake: sessionization (30-min
 gap), session funnel, retention cohorts (lake activity joined to OLTP signup +
-country), revenue rollup. Rebuild after live traffic: `duckdb marts.duckdb -f 04_marts.sql`.
+country), revenue rollup. Rebuild after live traffic with the collector stopped (it
+holds the locks): `duckdb marts.duckdb -f 04_marts.sql`.
 
 **Extras (`05`)** — BM25 `fts`, HNSW `vss` over text embeddings, a DuckPGQ
-co-purchase graph (`MATCH`), `spatial` nearest-warehouse, `httpfs` price feed.
+co-purchase graph (`MATCH`), `spatial` nearest-warehouse (an `httpfs` remote-Parquet
+join is there as a commented-out example).
 DuckPGQ needs `SET active_grammar_extensions = ['duckpgq']` after `LOAD` on 2.0
 (the scripts do this). `05`, `06` and the collector's DuckPGQ setup are
 **best-effort**: if an extension can't load, that feature degrades; the build continues.
@@ -100,12 +108,15 @@ DuckPGQ needs `SET active_grammar_extensions = ['duckpgq']` after `LOAD` on 2.0
 **Storefront (`public/index.html`)** — ships the catalog as Parquet and runs
 DuckDB-Wasm in the browser: every keystroke, facet and sort is a SQL query
 (BM25 blended with `ILIKE` so mid-word typing never goes empty). "Ducks like
-this" is a `NEAREST` join over `vss` embeddings. The console strip shows the
+this" is a `NEAREST` join over small text embeddings (hashed bag-of-words,
+`array_distance`); the page loads `vss` but nothing there needs it. The console strip shows the
 generated SQL and timings. The cart ("flock") has per-line − / ✕; stock badges
 poll `/stock` every 4 s. **Truth stays on the server**: checkout and inventory
 are the OLTP tier. "Since you brought them home" fuses embeddings with a DuckPGQ
-traversal; DuckPGQ doesn't load in Wasm, so it's a round-trip
-(`get_hybrid_recommendations()`).
+traversal over the order history, which lives in `oltp.duckdb`, so it's a round-trip
+(`get_hybrid_recommendations()`). DuckPGQ itself does load in the Haybarn Wasm build
+(checked: `INSTALL duckpgq` from Haybarn's community repo, the grammar opt-in and a
+`GRAPH_TABLE` query all work), so the walk could run in the browser if the graph were shipped to it.
 
 The collector serves scripts/styles/sprites at `/a/<content hash>/<name>` (cached
 a year, immutable) so a CDN can't serve stale ones after a deploy. The hash is in
@@ -114,13 +125,15 @@ the path, not a `?v=` query, because a CDN rule may ignore query strings.
 **Dashboard (`public/dashboard.html`)** — funnel, retention and daily activity are
 computed by DuckDB-Wasm *in the browser*, attached over quack to the collector's
 live lake connection. These three are quack-only (no fallback; cards show
-"waiting for the live Quack connection…"). Revenue/totals come from
+"Waiting for the live Quack connection…"). Revenue/totals come from
 `/dashboard-data` (needs `oltp.duckdb`, which the dashboard doesn't attach yet).
 
 Both pages use Query Farm's Haybarn build `@haybarn/haybarn-wasm@2.0.0-rc12`
-(jsDelivr), pinned the same on both (`test_pages.py` checks). It's the first
-Wasm build on the 2.0 engine whose quack can `ATTACH` to a 2.0 server;
-`@duckdb/duckdb-wasm` is still 1.5.x. The dashboard needs the threaded build, so
+(jsDelivr), pinned the same on both (`test_pages.py` checks). Its quack extension
+loads and can `ATTACH` to the 2.0 server. The official `@duckdb/duckdb-wasm` `next`
+(1.33.1-dev114.0) is also on the 2.0 engine, but there `LOAD quack` failed ("could not be
+loaded") when tried on 2026-11-08, so the dashboard can't attach with it (its `latest`,
+1.33.1-dev57.0, was not tried). The dashboard needs the threaded build, so
 the collector sends `COOP: same-origin` + `COEP: credentialless` for it; the
 storefront uses the non-threaded build (no isolation). Caveats: no fallback
 builds for browsers lacking Wasm exception handling, and extension files are
@@ -131,7 +144,8 @@ replaced in place. Move to the official package once it ships 2.0 with quack.
 insert into the live lake. Rows are tagged `props: {"stress": true}` so the
 dashboard's "⚡ writes" banner counts them apart from organic traffic. DuckLake
 is optimistic: under heavy contention a transaction can exhaust its retries
-(`Conflict on update!`) rather than queue.
+(48 workers did: "Exceeded the maximum retry count of 10 set by `ducklake_max_retry_count`")
+rather than queue.
 
 ## Public mode and abuse limits
 
@@ -145,11 +159,12 @@ so the proxy routes that path to the lake and the rest to the collector — one 
   the `app` container's network namespace to reach quack on loopback.
 - `make check` — confirms the endpoint refuses writes. `make browser` opens it.
 
-**Always-on limits** (`LIMITS` table in `collector.py`, covered by `make test`):
-per-IP and global token buckets (429 + `Retry-After`) on `/collect`, `/order` and
-the read endpoints; 16 KB body cap; max 20 events per request; orders of 1–20
+**Always-on limits** (`LIMITS` table in `collector.py`; the limiter and the request
+validation are unit-tested by `make test`):
+per-IP token buckets (429 + `Retry-After`) on `/collect`, `/order` and the read
+endpoints, plus a global bucket on `/collect` and `/order`; 16 KB body cap; max 20 events per request; orders of 1–20
 lines with qty 1–10 (a negative qty would add stock); only the tracker's event
-types. Client IP comes from a proxy-set header (`TEAL_DEAL_CLIENT_IP_HEADER`:
+types. In public mode the client IP comes from a proxy-set header (`TEAL_DEAL_CLIENT_IP_HEADER`:
 `X-Forwarded-For` for Caddy, `CF-Connecting-IP` behind Cloudflare), only trusted
 from loopback. Not covered: queries sent straight to the read-only quack
 endpoint (only `quack_server_max_connections` caps them), and a distributed flood
@@ -162,7 +177,7 @@ seeded data, so containers need no runtime network and start from seed state.
 
 `compose.prod.yaml` runs the app plus `cloudflared`. No ports are published;
 `cloudflared` dials out, so the firewall needs only SSH (which also makes
-`CF-Connecting-IP` trustworthy). Builds for x86 and ARM.
+`CF-Connecting-IP` trustworthy). Meant for x86 and ARM (only x86 has been built here).
 
 1. **Tunnel**: Zero Trust → Networks → Tunnels → create, copy the token. Add two
    Public Hostnames for `tealdeal.dorzey.net`, in this order
@@ -174,15 +189,20 @@ seeded data, so containers need no runtime network and start from seed state.
    `TEAL_DEAL_QUACK_URL` if not `tealdeal.dorzey.net`), then
    `docker compose -f compose.prod.yaml up -d --build`.
 4. **Check**: the shop loads, `/dashboard.html` fills in, and
-   `curl https://tealdeal.dorzey.net/config` returns `quack:tealdeal.dorzey.net:443`.
+   `curl https://tealdeal.dorzey.net/config` shows `"quack_url": "quack:tealdeal.dorzey.net:443"`.
 5. **Reset** (fresh seed, empty lake): `docker compose -f compose.prod.yaml up -d --force-recreate`
    (both containers; `cloudflared` shares the app's namespace). Nightly:
    `0 4 * * * cd /opt/teal-deal && docker compose -f compose.prod.yaml up -d --force-recreate`.
 
-Cloudflare gotchas: disable *Rocket Loader* and *Auto Minify*; if `POST /collect`
-or `POST /quack` get challenged, check *Bot Fight Mode* and WAF rules — browsers
-can't solve a challenge on a background POST. Wasm loads from jsDelivr, not
-Cloudflare: ~7 MB over the wire on first load (~45 MB in memory).
+Cloudflare gotchas (not hit here, so untested): features that rewrite scripts
+(*Rocket Loader*, *Auto Minify*) or challenge requests (*Bot Fight Mode*, WAF rules on
+`POST /collect` or `POST /quack`, which browsers can't solve in the background) could
+break the app. One that did bite: a cache rule ignoring query strings served a stale
+`tracker.js`, hence the hash in the asset *path*.
+Wasm loads from jsDelivr and the extensions from `haybarn-extensions.query.farm`, not
+through Cloudflare. First load, measured: the storefront moves ~9.5 MB (8.3 MB wasm,
+brotli, plus extensions); the dashboard's threaded wasm is ~7.3 MB. The wasm is 45 MB
+uncompressed.
 
 ## Manual re-runs
 
@@ -192,5 +212,6 @@ Stop the collector first (one process per DuckLake catalog), then e.g.
 ## Known limitations
 
 - `oltp.duckdb` has one writer; quack clients are still served by the collector's one connection.
-- `ducklake_snapshots()` doesn't work over quack (`AT (VERSION => n)` does).
+- `ducklake_snapshots('remote')` errors over quack ("does not refer to a DuckLake database");
+  `remote.snapshots()` and `AT (VERSION | TIMESTAMP => …)` work.
 - A Postgres-backed DuckLake catalog would allow real multi-process reads/writes.
