@@ -1,9 +1,11 @@
-"""Tests for collector.py: request validation, rate limiting, client-IP handling,
-asset-path versioning, and the inventory triggers (run against an in-memory copy of
-the 01_seed.sql schema).
+"""Tests for collector.py: request validation, rate limiting, client-IP handling, the HTTP
+layer (headers, CSP, HEAD, asset paths), the flush fallback, the inventory triggers and the
+hybrid recommender (against an in-memory copy of 01_seed.sql), and the public quack lock-down
+(a real quack server over a temporary DuckLake).
 
 Importing collector never touches the databases on disk (they connect lazily), so
-these need no build and no network:   make test   (or: uv run python -m unittest)
+these need no build and no network. The DuckPGQ and quack lock-down tests need those
+extensions installed (./run.sh does that once) and are skipped on a machine without them:   make test   (or: uv run python -m unittest)
 """
 import datetime as dt
 import unittest
@@ -288,8 +290,12 @@ class Flush(unittest.TestCase):
                             product_id BIGINT, event_ts TIMESTAMP, event_date DATE, props JSON)""")
         self.saved = (c._lake_con, list(c._buf), c._lake_rows)
         c._lake_con, c._buf[:], c._lake_rows = self.con, [], 0
+        import contextlib, io
+        self._quiet = contextlib.redirect_stdout(io.StringIO())   # flush() prints a status line
+        self._quiet.__enter__()
 
     def tearDown(self):
+        self._quiet.__exit__(None, None, None)
         c._lake_con, c._buf[:], c._lake_rows = self.saved[0], self.saved[1], self.saved[2]
 
     def row(self, eid, props='{"path": "/"}'):
@@ -304,8 +310,11 @@ class Flush(unittest.TestCase):
         self.assertEqual(c._lake_rows, 2)
 
     def test_one_bad_row_costs_only_itself(self):
+        import contextlib, io
         c._buf[:] = [self.row(1), self.row(2, props="{not json"), self.row(3)]
-        c.flush()                                          # must not raise
+        with contextlib.redirect_stderr(io.StringIO()) as log:   # flush() reports what it dropped
+            c.flush()                                      # must not raise
+        self.assertIn("dropped a bad event", log.getvalue())
         ids = sorted(r[0] for r in self.con.execute("SELECT event_id FROM events").fetchall())
         self.assertEqual(ids, [1, 3])
         self.assertEqual(c._lake_rows, 2)
@@ -316,6 +325,96 @@ class Flush(unittest.TestCase):
         with self.assertRaises(c.HttpError) as cm:
             c.enqueue(event())
         self.assertEqual(cm.exception.status, 503)
+
+
+class HttpSmoke(unittest.TestCase):
+    """The HTTP layer, against a real server on a free port. Only routes that need no
+    database: pages, assets, /config."""
+    @classmethod
+    def setUpClass(cls):
+        import http.client
+        import threading
+        from http.server import ThreadingHTTPServer
+        cls.http = http.client
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), c.Handler)
+        cls.port = cls.server.server_address[1]
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def request(self, method, path):
+        conn = self.http.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request(method, path)
+        r = conn.getresponse()
+        body = r.read()
+        conn.close()
+        return r, body
+
+    def test_pages_carry_a_content_security_policy_and_the_security_headers(self):
+        for path in ("/", "/dashboard.html"):
+            with self.subTest(path=path):
+                r, body = self.request("GET", path)
+                self.assertEqual(r.status, 200)
+                csp = r.getheader("Content-Security-Policy")
+                self.assertIn("default-src 'self'", csp)
+                self.assertIn("frame-ancestors 'none'", csp)
+                self.assertIn("object-src 'none'", csp)
+                self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+                self.assertEqual(r.getheader("X-Frame-Options"), "DENY")
+                self.assertIn(b"<html", body.lower())
+
+    def test_only_the_dashboard_is_cross_origin_isolated(self):
+        self.assertEqual(self.request("GET", "/dashboard.html")[0].getheader("Cross-Origin-Opener-Policy"), "same-origin")
+        self.assertIsNone(self.request("GET", "/")[0].getheader("Cross-Origin-Opener-Policy"))
+
+    def test_head_gets_the_same_headers_as_get_and_no_body(self):
+        for path in ("/", "/dashboard.html", "/config"):
+            with self.subTest(path=path):
+                got, body = self.request("GET", path)
+                head, head_body = self.request("HEAD", path)
+                self.assertEqual(head.status, 200)
+                self.assertEqual(head_body, b"")
+                self.assertEqual(head.getheader("Content-Length"), str(len(body)))
+                self.assertEqual(head.getheader("Content-Type"), got.getheader("Content-Type"))
+
+    def test_config_hands_out_the_quack_address(self):
+        import json
+        r, body = self.request("GET", "/config")
+        self.assertEqual(set(json.loads(body)), {"quack_url", "quack_token"})
+
+    def test_hashed_asset_paths_are_cached_forever_and_only_for_known_files(self):
+        import re
+        html = self.request("GET", "/")[1].decode()
+        path = re.search(r'src="(/a/[0-9a-f]{10}/tracker\.js)"', html).group(1)
+        r, body = self.request("GET", path)
+        self.assertEqual(r.status, 200)
+        self.assertIn("immutable", r.getheader("Cache-Control"))
+        self.assertIn(b"sendBeacon", body)
+        for bad in ("/a/0123456789/collector.py", "/a/0123456789/../../collector.py", "/a/xyz/tracker.js"):
+            with self.subTest(path=bad):
+                self.assertEqual(self.request("GET", bad)[0].status, 404)
+
+    def test_the_server_does_not_expose_the_source_or_databases(self):
+        for path in ("/collector.py", "/oltp.duckdb", "/../collector.py", "/.env"):
+            with self.subTest(path=path):
+                self.assertNotEqual(self.request("GET", path)[0].status, 200)
+
+    def test_quack_origin_follows_the_configured_address(self):
+        saved = c.QUACK_PUBLIC_URL
+        try:
+            for url, origin in [("quack:localhost:8789", "http://localhost:8789"),
+                                ("quack:tealdeal.dorzey.net:443", "https://tealdeal.dorzey.net"),
+                                ("quack:teal-deal.test:8443", "https://teal-deal.test:8443"),
+                                ("quack:[::1]:8789", "http://[::1]:8789"), ("nonsense", None)]:
+                c.QUACK_PUBLIC_URL = url
+                self.assertEqual(c._quack_origin(), origin, url)
+                if origin:
+                    self.assertIn(origin, c._csp())
+        finally:
+            c.QUACK_PUBLIC_URL = saved
 
 
 class OrderErrorMessage(unittest.TestCase):
@@ -331,6 +430,126 @@ class OrderErrorMessage(unittest.TestCase):
             con.execute("INSERT INTO inventory VALUES (1, 1)")
         self.assertEqual(c._order_error_message(dup.exception), "that order couldn't be placed")
         self.assertEqual(c._order_error_message(ValueError("unknown product 9999")), "that order couldn't be placed")
+
+
+def _extension_available(*names):
+    """True if these DuckDB extensions can be LOADed here (installed already). The tests that
+    need them are skipped, not failed, on a machine that has never run ./run.sh."""
+    import duckdb
+    con = duckdb.connect()
+    try:
+        for n in names:
+            con.execute(f"LOAD {n}")
+        return True
+    except Exception:
+        return False
+    finally:
+        con.close()
+
+
+@unittest.skipUnless(_extension_available("duckpgq"), "duckpgq is not installed (run ./run.sh once)")
+class HybridRecommendations(unittest.TestCase):
+    """The "Since you brought them home" query: DuckPGQ graph walk + NEAREST similarity."""
+    @classmethod
+    def setUpClass(cls):
+        import duckdb
+        cls.con = duckdb.connect()
+        with open("01_seed.sql") as f:
+            cls.con.execute(f.read())
+        cls.saved = (c._oltp_con, c._has_hybrid)
+        c._oltp_con = cls.con
+        c._setup_hybrid(cls.con)
+        c._has_hybrid = True
+
+    @classmethod
+    def tearDownClass(cls):
+        c._oltp_con, c._has_hybrid = cls.saved
+        cls.con.close()
+
+    def test_returns_other_products_never_the_ones_just_bought(self):
+        got = c.get_hybrid_recommendations([3, 5, 10])
+        self.assertEqual(len(got), 4)
+        self.assertFalse({3, 5, 10} & set(got))
+        self.assertEqual(len(set(got)), 4)
+        known = {r[0] for r in self.con.execute("SELECT product_id FROM products").fetchall()}
+        self.assertTrue(set(got) <= known)
+
+    def test_is_deterministic(self):
+        self.assertEqual(c.get_hybrid_recommendations([40]), c.get_hybrid_recommendations([40]))
+
+    def test_nothing_bought_means_nothing_suggested(self):
+        self.assertEqual(c.get_hybrid_recommendations([]), [])
+
+    def test_the_limit_is_respected(self):
+        self.assertEqual(len(c.get_hybrid_recommendations([3], limit=2)), 2)
+
+
+@unittest.skipUnless(_extension_available("ducklake", "quack"), "ducklake/quack are not installed (run ./run.sh once)")
+class PublicLakeLockdown(unittest.TestCase):
+    """_lock_down_lake end to end: a real quack server over a real (temporary) DuckLake, and
+    a client attacking it the way the audit did."""
+    PORT = 18789
+
+    @classmethod
+    def setUpClass(cls):
+        import duckdb
+        import os
+        import tempfile
+        cls.cwd = os.getcwd()
+        cls.tmp = tempfile.TemporaryDirectory()
+        os.chdir(cls.tmp.name)            # DuckLake's data path is relative to the working directory
+        seed = duckdb.connect()
+        seed.execute("LOAD ducklake")
+        seed.execute("ATTACH 'ducklake:lock.ducklake' AS lk (DATA_PATH 'lakehouse_data/')")
+        seed.execute("CREATE TABLE lk.events (event_id BIGINT, event_type VARCHAR)")
+        seed.execute("INSERT INTO lk.events VALUES (1, 'pageview'), (2, 'add_to_cart')")
+        seed.close()
+        cls.server = duckdb.connect("ducklake:lock.ducklake")
+        cls.server.execute("LOAD quack")
+        c._lock_down_lake(cls.server)     # the real function, before serving as in _lake()
+        cls.server.execute(f"SELECT * FROM quack_serve('quack://127.0.0.1:{cls.PORT}', token := 'testtoken', disable_ssl := true)")
+        cls.server.execute("SET enable_external_access = false")
+        cls.client = duckdb.connect()
+        cls.client.execute("LOAD quack")
+        cls.client.execute(f"ATTACH 'quack:127.0.0.1:{cls.PORT}' AS r (TOKEN 'testtoken')")
+
+    @classmethod
+    def tearDownClass(cls):
+        import os
+        cls.client.close()
+        cls.server.close()
+        os.chdir(cls.cwd)
+        cls.tmp.cleanup()
+
+    def remote(self, sql):
+        return self.client.execute("SELECT * FROM quack_query_by_name('r', ?)", [sql]).fetchall()
+
+    def test_reads_work(self):
+        self.assertEqual(self.remote("SELECT count(*) FROM events"), [(2,)])
+        self.assertEqual(self.client.execute("SELECT count(*) FROM r.events").fetchone(), (2,))
+
+    def test_writes_and_maintenance_are_refused_and_nothing_changes(self):
+        attacks = ["INSERT INTO events VALUES (9, 'x')", "DELETE FROM events", "DROP TABLE events",
+                   "SELECT * FROM ducklake_expire_snapshots('lock', versions => [1])",
+                   "SELECT * FROM ducklake_set_option('lock', 'parquet_compression', 'zstd')",
+                   "SELECT * FROM lock.set_option('parquet_compression', 'zstd')",
+                   "SELECT * FROM lock.merge_adjacent_files()",
+                   "SELECT * FROM read_json_auto('/etc/passwd')", "COPY events TO 'x.csv'"]
+        snapshots = lambda: self.server.execute("SELECT count(*) FROM ducklake_snapshots('lock')").fetchone()
+        before = snapshots()
+        for sql in attacks:
+            with self.subTest(sql=sql):
+                with self.assertRaises(Exception) as cm:
+                    self.remote(sql)
+                self.assertIn("Authorization failed", str(cm.exception))
+        self.assertEqual(self.remote("SELECT count(*) FROM events"), [(2,)])
+        self.assertEqual(snapshots(), before)        # no snapshot was expired, none was added
+
+    def test_a_query_over_the_memory_limit_fails_instead_of_taking_the_process_down(self):
+        with self.assertRaises(Exception) as cm:
+            self.remote("SELECT list(i) FROM range(1000000000) t(i)")
+        self.assertIn("Out of Memory", str(cm.exception))
+        self.assertEqual(self.remote("SELECT count(*) FROM events"), [(2,)])   # still answering
 
 
 class Restock(unittest.TestCase):

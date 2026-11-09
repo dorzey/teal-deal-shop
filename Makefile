@@ -15,8 +15,10 @@ TOKEN   ?= teal-deal-demo-token
 help:  ## list the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-9s %s\n", $$1, $$2}'
 
-# Rebuild only if the data is missing; `make build` always rebuilds.
-teal_deal_catalog.ducklake:
+# Rebuild only if any build output is missing (so a half-deleted state is rebuilt, not
+# served broken); `make build` always rebuilds. `&:` = one run of the recipe makes them all.
+BUILD_OUTPUTS = oltp.duckdb marts.duckdb teal_deal_catalog.ducklake public/catalog.parquet
+$(BUILD_OUTPUTS) &:
 	./run.sh --build-only
 
 build:  ## rebuild all data from scratch, don't serve
@@ -25,10 +27,10 @@ build:  ## rebuild all data from scratch, don't serve
 run:  ## rebuild, then serve locally on :8787 (same as ./run.sh)
 	./run.sh
 
-serve: teal_deal_catalog.ducklake  ## serve what's already built (no rebuild)
+serve: $(BUILD_OUTPUTS)  ## serve what's already built (no rebuild)
 	uv run collector.py
 
-public: teal_deal_catalog.ducklake  ## serve via TLS proxy, quack read-only (needs docker, Linux)
+public: $(BUILD_OUTPUTS)  ## serve via TLS proxy, quack read-only (needs docker, Linux)
 	-@docker rm -f $(CADDY) >/dev/null 2>&1
 	docker run -d --name $(CADDY) --network host \
 	  -v $(CURDIR)/deploy/Caddyfile.local:/etc/caddy/Caddyfile:ro caddy:2 >/dev/null
@@ -73,7 +75,7 @@ check-links:  ## request every outbound link in X-ray mode (public/xray.js); run
 	  code=$$(curl -s -o /dev/null -L -m 20 -w '%{http_code}' "$$url"); \
 	  echo "$$code  $$url"; [ "$$code" = 200 ] || fail=1; done; exit $$fail
 
-test:  ## unit tests: validation, rate limits, client IP, restock trigger, page checks (no build or network)
+test:  ## unit tests: validation, limits, HTTP layer, restock, hybrid recs, quack lock-down, page/repo checks (no network)
 	uv run python -m unittest
 
 stop:  ## stop collector, proxy/containers and throwaway browser
