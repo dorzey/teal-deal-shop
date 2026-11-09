@@ -892,9 +892,8 @@ async function showPostPurchaseRecs(purchasedIds) {
 
   // 1. Hybrid: DuckPGQ co-purchase graph (behavioral signal) fused with real
   // text-embedding similarity (content signal), server-side — see
-  // collector.py's get_hybrid_recommendations(). DuckPGQ doesn't load in
-  // DuckDB-WASM, so unlike "Ducks like this" this can't run purely
-  // client-side.
+  // collector.py's get_hybrid_recommendations(). The order history it walks
+  // lives in oltp.duckdb, so unlike "Ducks like this" this isn't client-side.
   if (purchasedIds.length) {
     try {
       const res = await fetch(`/hybrid-recommendations?product_ids=${purchasedIds.join(',')}`);
