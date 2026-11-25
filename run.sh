@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 # 02_oltp.sql, so always turn it off: the build must not depend on who runs it.
 duckdb_cli() { "$DUCKDB" -no-agent "$@"; }
 
-echo "==> uv sync (Python deps, pinned duckdb==2.0.0)"
+echo "==> uv sync (Python deps, pinned duckdb==2.0.1)"
 uv sync
 
 echo "==> reset"

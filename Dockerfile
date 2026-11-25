@@ -10,12 +10,12 @@
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 # DUCKDB_VERSION must match the duckdb pin in pyproject.toml (test_pages.py checks).
-ARG DUCKDB_VERSION=2.0.0
+ARG DUCKDB_VERSION=2.0.1
 # SHA-256 of that release's CLI tarball for each architecture. DuckDB publishes no
 # checksums, so these were taken from the downloads when the version was pinned; they
 # make later downloads of the same file verifiable. Update them with DUCKDB_VERSION.
-ARG DUCKDB_SHA256_AMD64=c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc
-ARG DUCKDB_SHA256_ARM64=859e1875d2a9515fbb4bf8871061437a14af82320da68c753f094c4b776348fe
+ARG DUCKDB_SHA256_AMD64=b676268be4d39e4e41a904442c9796c9914e645cc085c7505f048f2c992b5eca
+ARG DUCKDB_SHA256_ARM64=84e37891fcc45c887e30220f51a4914995cd8174139e87f8efd311ac83c956a7
 ARG TARGETARCH
 
 RUN apt-get update \

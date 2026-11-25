@@ -65,7 +65,7 @@ make_ranges.py             generates ranges.json (rough species ranges for "Duck
 run.sh, Makefile           build + serve, and a wrapper for the common tasks
 Dockerfile, compose*.yaml, deploy/, .env.example   image, local TLS rehearsal, Cloudflare Tunnel
 test_collector.py, test_pages.py, test_repo.py     unit tests (`make test`, no network)
-pyproject.toml, uv.lock, .python-version           Python deps (duckdb pinned to 2.0.0)
+pyproject.toml, uv.lock, .python-version           Python deps (duckdb pinned to 2.0.1)
 ```
 
 `oltp.duckdb`, `marts.duckdb`, `teal_deal_catalog.ducklake`, `lakehouse_data/` and
@@ -224,7 +224,7 @@ validation are unit-tested by `make test`):
 can use up the global order limit and lock out real shoppers; and the lake's contents,
 including anything a visitor forges through `/collect`, are readable by anyone.
 
-The image bakes in the pinned 2.0.0 CLI, the Python deps, every extension and the
+The image bakes in the pinned 2.0.1 CLI, the Python deps, every extension and the
 seeded data, so containers need no network at runtime and start from the seed state. The
 base image and `cloudflared` are pinned by digest, and the CLI download is checked against a
 SHA-256 (DuckDB publishes none, so the hashes were taken from the downloads when the version
